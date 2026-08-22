@@ -1,0 +1,10 @@
+# CSE main/MAOVLD/VE grid sheets: D2/D4/D5 map positionally to 20/40/40HC,
+# same convention as SAF/EAF. No reefer ("RD5") column on this lane - the
+# reefer rate comes from a wholly separate raw sheet (NOR(PA)/NOR(MAOVLD))
+# with its own single-column layout, handled directly in cse.py.
+prefix: D
+cgo_type: DR
+containers:
+  D2: "20"
+  D4: "40"
+  D5: "40hc"

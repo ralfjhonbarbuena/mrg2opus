@@ -1,0 +1,10 @@
+# LAEC lane: D2/D4/D5 map positionally to 20/40/40HC, same convention as
+# SAF/EAF/CSE. No reefer ("RD5") column - reefer comes from the separate
+# "R5 NOR" raw sheet, handled directly in laec.py (same pattern as CSE's
+# NOR(PA)/NOR(MAOVLD)).
+prefix: D
+cgo_type: DR
+containers:
+  D2: "20"
+  D4: "40"
+  D5: "40hc"

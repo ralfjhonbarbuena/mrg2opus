@@ -1,0 +1,11 @@
+# LAWC lane: raw container labels are "20'"/"40'"/"HCD" (not "D2"/"D4"/"D5"
+# like other lanes) but map positionally to the same 20/40/40HC slots.
+# No reefer ("RD5"-style) column on the Dry grids - reefer/NOR come from
+# wholly separate raw sheets ("Reefer", "LAWC NOR"), handled directly in
+# lawc.py, same pattern as CSE/LAEC.
+prefix: D
+cgo_type: DR
+containers:
+  "20'": "20"
+  "40'": "40"
+  HCD: "40hc"

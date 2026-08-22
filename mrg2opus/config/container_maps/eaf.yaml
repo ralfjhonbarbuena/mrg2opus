@@ -1,0 +1,12 @@
+# EAF lane: whole sheet is general dry FAK cargo -> constant Prefix/CGO TYPE.
+# Only 3 container columns (D2, D4, D5), no reefer ("RD5") column at all -
+# confirmed against ground truth (no Prefix "R" rows in either sub-lane's
+# OPUS RATES sheet). D5 (40HC) is always a formula mirroring D4 (40) in the
+# raw sheet, but that's just how the raw sheet computes it - the resulting
+# value still goes in the OPUS 40HC slot like any other rate.
+prefix: D
+cgo_type: DR
+containers:
+  D2: "20"
+  D4: "40"
+  D5: "40hc"

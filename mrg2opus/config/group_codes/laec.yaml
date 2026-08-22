@@ -1,0 +1,37 @@
+# Verified directly against LAEC.xlsx's OPUS RATES ground truth expansion
+# of the FEBP/WPRD origin group rows (same lane-shared shorthand as CSE -
+# see group_codes.py for why this is hardcoded rather than parsed from the
+# raw sheet's footnote text, which is unreliable: LAEC's own footnote lists
+# Korea/Pusan as part of FEBP, but the ground truth excludes it - same
+# pattern CSE showed).
+FEBP:  # "FAR EAST BASE PORT" - note: includes Chiwan (CNCWN), unlike CSE's FEBP
+  - CNCWN
+  - CNNGB
+  - CNSHA
+  - CNSHK
+  - CNTAO
+  - CNXMN
+  - CNYTN
+  - HKHKG
+  - SGSIN
+  - TWKEL
+  - TWKHH
+  - TWTYN
+WPRD:  # "PEARL RIVER DELTA" - same member list as CSE's WPRD
+  - CNFOS
+  - CNGOM
+  - CNGON
+  - CNJJG
+  - CNJMN
+  - CNLUU
+  - CNNSA
+  - CNROQ
+  - CNSHG
+  - CNSJQ
+  - CNSWA
+  - CNXIL
+  - CNYQS
+  - CNZHA
+  - CNZQG
+  - CNZSN
+  - CNZUH

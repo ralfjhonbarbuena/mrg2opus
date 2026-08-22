@@ -1,0 +1,15 @@
+# SAF lane: whole sheet is general dry FAK cargo -> constant Prefix/CGO TYPE.
+# D2/D4/D5 map positionally to OPUS rate slots 20/40/40HC under the normal
+# Prefix "D" row. RD5 ("Reefer D5") is NOT a 4th rate slot on the same row -
+# confirmed against ground truth it produces a SEPARATE row with Prefix "R"
+# whose rate goes in the 40HC slot. See saf.py's reefer-row handling; RD5 is
+# deliberately absent from this map and handled separately.
+prefix: D
+cgo_type: DR
+containers:
+  D2: "20"
+  D4: "40"
+  D5: "40hc"
+
+reefer_container_label: RD5
+reefer_prefix: R

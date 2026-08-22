@@ -1,0 +1,22 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "streamlit-ui",
+      "runtimeExecutable": "./.venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-m",
+        "streamlit",
+        "run",
+        "mrg2opus/ui/app.py",
+        "--server.port",
+        "8501",
+        "--server.headless",
+        "true",
+        "--server.address",
+        "127.0.0.1"
+      ],
+      "port": 8501
+    }
+  ]
+}

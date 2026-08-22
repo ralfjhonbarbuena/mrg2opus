@@ -1,0 +1,33 @@
+# Verified directly against CSE.xlsx's OPUS RATES ground truth expansion
+# of the FEBP/WPRD origin group rows (see group_codes.py for why this is
+# hardcoded rather than parsed from the raw sheet's footnote text).
+FEBP:  # "FAR EAST BASE PORT"
+  - CNNGB
+  - CNSHA
+  - CNSHK
+  - CNTAO
+  - CNXMN
+  - CNYTN
+  - HKHKG
+  - SGSIN
+  - TWKEL
+  - TWKHH
+  - TWTYN
+WPRD:  # "PEARL RIVER DELTA"
+  - CNFOS
+  - CNGOM
+  - CNGON
+  - CNJJG
+  - CNJMN
+  - CNLUU
+  - CNNSA
+  - CNROQ
+  - CNSHG
+  - CNSJQ
+  - CNSWA
+  - CNXIL
+  - CNYQS
+  - CNZHA
+  - CNZQG
+  - CNZSN
+  - CNZUH
