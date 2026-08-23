@@ -104,6 +104,41 @@ def arbs_row_key(row: dict[str, Any]) -> tuple:
     return (row.get("point"), row.get("over"), row.get("per"))
 
 
+# Deliberate, user-directed or externally-assigned deviations that make
+# certain columns permanently non-matching between a fresh parse and a
+# written OPUS file - promoted from each lane's own golden test file
+# (tests/test_parsers_*.py), which documents WHY each is a known,
+# accepted gap rather than a parsing bug (e.g. `type` defaults to "C" on
+# every generated row, but several lanes' own ground truth leaves it
+# blank; `header_seq`/`note_seq` are writer-assigned running numbers,
+# never derivable from source data). Keyed by lane_id, used by the
+# Compare UI so it doesn't drown real discrepancies in known noise.
+RATES_IGNORE_FIELDS_BY_LANE = {
+    "SAF": frozenset(),
+    "EAF": frozenset({"type"}),
+    "CSE": frozenset({"type", "commodity_group_description"}),
+    "LAEC": frozenset({"cmdt_seq", "route_seq", "type", "commodity_group_description"}),
+    "LAWC": frozenset({"cmdt_seq", "route_seq", "commodity_note", "type", "commodity_group_description"}),
+}
+
+RATES_PORT_PORT_IGNORE_FIELDS_BY_LANE = {
+    **RATES_IGNORE_FIELDS_BY_LANE,
+    "EAF": frozenset({"type", "route_seq", "cmdt_seq", "commodity_note"}),
+}
+
+CMDT_NOTE_IGNORE_FIELDS_BY_LANE = {
+    "SAF": frozenset({"header_seq", "note_seq"}),
+    "EAF": frozenset({"header_seq", "note_seq"}),
+    "CSE": frozenset({"header_seq", "note_seq", "pol"}),
+    "LAEC": frozenset({"header_seq", "note_seq", "pol"}),
+    "LAWC": frozenset({"header_seq", "note_seq", "pol"}),
+}
+
+SPECIAL_NOTE_IGNORE_FIELDS_BY_LANE = {
+    "CSE": frozenset({"header_seq", "note_seq"}),
+}
+
+
 @dataclass
 class KeyedDiffResult:
     matched: int
@@ -187,7 +222,7 @@ class BlockDiffResult:
     field_mismatches: list[tuple[str, int, str, Any, Any]] = field(default_factory=list)
 
 
-def diff_cmdt_blocks(generated: list[dict[str, Any]], expected: list[dict[str, Any]], fields: list[str]) -> BlockDiffResult:
+def diff_cmdt_blocks(generated: list[dict[str, Any]], expected: list[dict[str, Any]], fields: list[str], ignore_fields: set[str] = frozenset()) -> BlockDiffResult:
     """CMDT NOTE / SPECIAL NOTE have no reliable per-row key (children
     share their parent's blank header_seq/note_seq) and a reference
     file's row order isn't guaranteed to match the generator's - unlike
@@ -209,6 +244,8 @@ def diff_cmdt_blocks(generated: list[dict[str, Any]], expected: list[dict[str, A
         e_rows = [e_block.parent, *e_block.children]
         for idx, (g_row, e_row) in enumerate(zip(g_rows, e_rows)):
             for field_name in fields:
+                if field_name in ignore_fields:
+                    continue
                 gv, ev = _normalize(g_row.get(field_name)), _normalize(e_row.get(field_name))
                 if gv != ev:
                     field_mismatches.append((key, idx, field_name, gv, ev))

@@ -17,7 +17,16 @@ from __future__ import annotations
 import openpyxl
 import pytest
 
-from mrg2opus.audit.compare import diff_by_key, rates_row_key, read_rates_sheet
+from mrg2opus.audit.compare import (
+    CMDT_NOTE_IGNORE_FIELDS_BY_LANE,
+    SPECIAL_NOTE_IGNORE_FIELDS_BY_LANE,
+    diff_by_key,
+    diff_cmdt_blocks,
+    rates_row_key,
+    read_cmdt_note_sheet,
+    read_rates_sheet,
+    read_special_note_sheet,
+)
 from mrg2opus.parsers.cse import CSEParser
 from mrg2opus.parsers.eaf import EAFParser
 from mrg2opus.parsers.laec import LAECParser
@@ -49,3 +58,44 @@ def test_compare_engine_finds_no_missing_or_extra_rates_rows_against_own_ground_
         result = diff_by_key(generated, expected, key_fn=rates_row_key, fields=cols.RATES_ROW_FIELDS)
         assert not result.missing, f"{path} [{suffix or '(default)'}]: missing {len(result.missing)} rows"
         assert not result.extra, f"{path} [{suffix or '(default)'}]: {len(result.extra)} unexpected rows"
+
+
+@pytest.mark.parametrize(
+    "path,parser_cls,lane_id",
+    [
+        ("Sample MRGs with OPUS FORMATS/SAF.xlsx", SAFParser, "SAF"),
+        ("Sample MRGs with OPUS FORMATS/EAF.xlsx", EAFParser, "EAF"),
+        ("Sample MRGs with OPUS FORMATS/CSE.xlsx", CSEParser, "CSE"),
+        ("Sample MRGs with OPUS FORMATS/LAEC.xlsx", LAECParser, "LAEC"),
+        ("Sample MRGs with OPUS FORMATS/LAWC.xlsx", LAWCParser, "LAWC"),
+    ],
+)
+def test_compare_engine_finds_no_missing_or_extra_cmdt_note_blocks_against_own_ground_truth(path, parser_cls, lane_id):
+    wb = openpyxl.load_workbook(path, data_only=True)
+    parser = parser_cls()
+    row_sets = parser.run_multi(wb, MappingProfile())
+    ignore = CMDT_NOTE_IGNORE_FIELDS_BY_LANE.get(lane_id, frozenset())
+    for suffix, row_set in row_sets.items():
+        if not row_set.cmdt_notes:
+            continue
+        tag = f"-{suffix}" if suffix else ""
+        generated = [r.model_dump() for r in row_set.cmdt_notes]
+        expected = read_cmdt_note_sheet(wb, f"OPUS CMDT NOTE{tag}")
+
+        result = diff_cmdt_blocks(generated, expected, cols.CMDT_NOTE_ROW_FIELDS, ignore_fields=ignore)
+        assert not result.missing_blocks, f"{path} [{suffix or '(default)'}]: missing blocks {result.missing_blocks}"
+        assert not result.extra_blocks, f"{path} [{suffix or '(default)'}]: extra blocks {result.extra_blocks}"
+
+
+def test_compare_engine_finds_no_missing_or_extra_special_note_blocks_against_own_ground_truth():
+    """CSE is the only bundled sample lane that produces OPUS SPECIAL NOTE."""
+    wb = openpyxl.load_workbook("Sample MRGs with OPUS FORMATS/CSE.xlsx", data_only=True)
+    parser = CSEParser()
+    row_set = parser.run(wb, MappingProfile())
+    ignore = SPECIAL_NOTE_IGNORE_FIELDS_BY_LANE.get("CSE", frozenset())
+    generated = [r.model_dump() for r in row_set.special_notes]
+    expected = read_special_note_sheet(wb)
+
+    result = diff_cmdt_blocks(generated, expected, cols.SPECIAL_NOTE_ROW_FIELDS, ignore_fields=ignore)
+    assert not result.missing_blocks, f"missing blocks {result.missing_blocks}"
+    assert not result.extra_blocks, f"extra blocks {result.extra_blocks}"

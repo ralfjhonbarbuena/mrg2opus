@@ -587,9 +587,9 @@ key exists (child rows share their parent's blank `header_seq`/
 `note_seq`), and a reference file's row order isn't guaranteed to match
 the generator's the way it is when golden tests always compare against
 one exact known sample. `diff_cmdt_blocks()` reconstructs each side's
-block structure independently (a non-blank `header_seq`/`note_seq` starts
-a block; blank-seq rows belong to it - mirrors the writer's own fill-down
-convention), keys blocks by the parent's `contents` text, and only
+block structure independently (a non-blank `contents` starts a block;
+the following blank-`contents` rows belong to it - mirrors the writer's
+own fill-down convention), keys blocks by the parent's `contents` text, and only
 compares child rows positionally *within* a matched block - scoping the
 fragile ordering assumption to one block instead of the whole sheet.
 
@@ -628,7 +628,10 @@ identity, verified non-blank on parents and blank on children in both
 the fresh-parse and written-then-reread representations) - see commit
 `4661ed6` and the regression test
 `test_reconstruct_blocks_detects_parent_via_contents_when_seq_fields_are_none`
-in `tests/test_audit_compare.py`.
+in `tests/test_audit_compare.py`. The Compare UI's `ignore_fields`
+handling (added in the final-review fix wave) reuses each lane's
+already-documented golden-test ignore sets - see
+`RATES_IGNORE_FIELDS_BY_LANE` etc. in `mrg2opus/audit/compare.py`.
 
 ## 5. Files touched this session (everything above is new)
 
