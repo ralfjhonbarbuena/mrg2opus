@@ -68,7 +68,7 @@ streamlit, PyYAML, platformdirs, python-dateutil, pytest).
 | **LAEC** | ✅ Done, near-exact (documented gaps) | Same shape as CSE but doubled: every sheet splits into Non-ISC/ISC sections. "R5 NOR" now defaults to its own commodity description (see §3.6). | 4/4 pass |
 | **LAWC** | ✅ Done, exact match | 4 Dry-shaped grids (main/SEA/ISC/OOG) + Reefer + NOR sheets, each its own commodity group. OOG has 4 equipment-type column-pairs mapping to Prefix O/F twins or F-only. RATES PORT-PORT uses a completely different commodity code namespace than RATES for the same data. Reefer/NOR now default to their own commodity descriptions (see §3.6). | 4/4 pass |
 
-Full test suite: **54/54 passing** (`./.venv/Scripts/python.exe -m pytest tests/ -v`, ~2.5-3 min) - includes `test_excel_io_merge.py` (5 tests) and `test_ordering.py` (6 tests) added for §3.7's multi-file/ordering work, one CSE regression test added for §3.8's shifted-header-row fix, and 4 more (2 in `test_header_grid.py`, 2 in `test_parsers_cse.py`) added for §3.9's withdrawn-location exclusion.
+Full test suite: **91/91 passing** (`./.venv/Scripts/python.exe -m pytest tests/ -v`, ~4-4.5 min) - includes `test_excel_io_merge.py` (5 tests) and `test_ordering.py` (6 tests) added for §3.7's multi-file/ordering work, one CSE regression test added for §3.8's shifted-header-row fix, 4 more (2 in `test_header_grid.py`, 2 in `test_parsers_cse.py`) added for §3.9's withdrawn-location exclusion, the Compare mode's own suite from §3.11 (`test_audit_compare.py`, `test_compare_engine_regression.py`, `test_mrg_upload.py`, `test_compare_page.py`), and one regression test per lane added for §3.12's DG opt-out.
 
 ## 3.5 Phase 2 — Streamlit wizard UI
 
@@ -633,6 +633,45 @@ handling (added in the final-review fix wave) reuses each lane's
 already-documented golden-test ignore sets - see
 `RATES_IGNORE_FIELDS_BY_LANE` etc. in `mrg2opus/audit/compare.py`.
 
+## 3.12 Per-group opt-out of DG (Dangerous Goods) duplicate rows
+
+User-requested. Every lane (SAF, EAF, LAWC, LAEC, CSE) has a standing
+filing convention, verified against each lane's own ground truth and
+never derivable from the raw sheet itself: every base Dry (D/DR) row also
+files an identical D/DG variant at the same rate. This was previously
+unconditional - `MappingProfile` gains `skip_dg_generation: dict[str,
+bool]`, keyed the same way as every other per-group override here (a
+group's default, override-free description - see §3.6's key-convention
+note). `True` suppresses that group's DG duplicate rows entirely (the
+base D/DR rows are untouched); absent/`False` keeps the existing default
+behavior, so every pre-existing golden test needed zero changes.
+
+Each of the 5 lanes' DG-duplication code already lived inside a
+`self.container_map.cgo_type == "DR":` guard, itself already inside a
+per-group loop with the right description variable in scope
+(`DEFAULT_COMMODITY_DESCRIPTION` for SAF/EAF's single/shared group,
+`default_description` for LAWC/LAEC/CSE's per-sheet groups) - the fix is
+one added clause per lane: `and not
+config.skip_dg_generation.get(<description>, False)`.
+
+**Known, accepted scope limit, same category as §3.6's LAWC PP_COMMODITY
+note:** EAF's two sub-lanes (TZDAR, KEMBA) share one default description
+("FAK") - already true for every other override in this profile, so this
+toggle can't target just one sub-lane either. Confirmed with the user
+before implementing; not a bug, matches existing precedent exactly.
+
+UI: Step 3's commodity-groups table gains a "Skip DG" checkbox column,
+collected into `skip_dg_generation` on Apply the same way every other
+override column is (`ui/steps/step3_customize.py`).
+
+Tests: one regression test per lane (`test_<lane>_skip_dg_generation_...`
+in each `tests/test_parsers_*.py`), each confirming (a) the *default*
+(unset) run still produces DG rows exactly as before, (b) setting the
+toggle for one group removes only that group's DG rows and leaves its
+DR rows untouched, and (c) for the 3 multi-group lanes (LAWC, LAEC, CSE),
+a *sibling* group's DG rows are unaffected - proving the toggle is
+correctly scoped per group, not a lane-wide switch.
+
 ## 5. Files touched this session (everything above is new)
 
 Nothing pre-existed before this session — the whole `mrg2opus/` package,
@@ -739,7 +778,7 @@ cd "C:\Users\romsae-desktop\claude\PROCESS INNOVATION HACKATHON"
 ./.venv/Scripts/python.exe -m pytest tests/ -v
 ```
 
-Should show 54 passed. If not, something regressed since this note was
+Should show 91 passed. If not, something regressed since this note was
 written — bisect before building on top of it.
 
 To check the UI itself is still working end-to-end, run

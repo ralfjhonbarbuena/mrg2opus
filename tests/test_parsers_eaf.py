@@ -3,7 +3,7 @@ from __future__ import annotations
 import openpyxl
 import pytest
 
-from mrg2opus.parsers.eaf import EAFParser
+from mrg2opus.parsers.eaf import DEFAULT_COMMODITY_DESCRIPTION, EAFParser
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema import opus_columns as cols
 from tests.golden import diff_rates, read_cmdt_note_sheet, read_rates_sheet, _normalize_cmdt_value
@@ -112,3 +112,24 @@ def test_eaf_cmdt_note_matches_ground_truth(sublane):
             gv = _normalize_cmdt_value(g.get(field_name))
             ev = _normalize_cmdt_value(e.get(field_name))
             assert gv == ev, f"[{sublane}] {field_name}: {gv!r} != {ev!r}"
+
+
+def test_eaf_skip_dg_generation_suppresses_dg_rows_for_both_sublanes():
+    """EAF's two sub-lanes share one default description ("FAK") - same as
+    every other MappingProfile override for this lane - so this toggle
+    necessarily affects both TZDAR and KEMBA together, not independently."""
+    wb = openpyxl.load_workbook(PATH, data_only=True)
+    parser = EAFParser()
+    default_row_sets = parser.run_multi(wb, MappingProfile())
+
+    profile = MappingProfile(skip_dg_generation={DEFAULT_COMMODITY_DESCRIPTION: True})
+    row_sets = parser.run_multi(wb, profile)
+
+    for sublane in SUBLANES:
+        default_cgo_types = {r.cgo_type for r in default_row_sets[sublane].rates}
+        assert "DG" in default_cgo_types
+
+        cgo_types = {r.cgo_type for r in row_sets[sublane].rates}
+        assert "DG" not in cgo_types
+        assert "DR" in cgo_types
+        assert len(row_sets[sublane].rates) < len(default_row_sets[sublane].rates)

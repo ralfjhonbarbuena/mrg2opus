@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import openpyxl
 
-from mrg2opus.parsers.saf import SAFParser
+from mrg2opus.parsers.saf import DEFAULT_COMMODITY_DESCRIPTION, SAFParser
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema import opus_columns as cols
 from tests.golden import _normalize_cmdt_value, diff_rates, read_cmdt_note_sheet, read_rates_sheet
 
 
-def _run_saf():
+def _run_saf(profile: MappingProfile | None = None):
     path = "Sample MRGs with OPUS FORMATS/SAF.xlsx"
     wb = openpyxl.load_workbook(path, data_only=False)
     parser = SAFParser()
-    row_set = parser.run(wb, MappingProfile())
+    row_set = parser.run(wb, profile or MappingProfile())
     return path, row_set
 
 
@@ -56,3 +56,16 @@ def test_saf_cmdt_note_matches_ground_truth():
             gv = _normalize_cmdt_value(g.get(field_name))
             ev = _normalize_cmdt_value(e.get(field_name))
             assert gv == ev, f"{field_name}: {gv!r} != {ev!r}"
+
+
+def test_saf_skip_dg_generation_suppresses_dg_rows_only():
+    _, default_row_set = _run_saf()
+    default_cgo_types = {r.cgo_type for r in default_row_set.rates}
+    assert "DG" in default_cgo_types  # confirms the default (unset) case still generates DG, as before
+
+    profile = MappingProfile(skip_dg_generation={DEFAULT_COMMODITY_DESCRIPTION: True})
+    _, row_set = _run_saf(profile)
+    cgo_types = {r.cgo_type for r in row_set.rates}
+    assert "DG" not in cgo_types
+    assert "DR" in cgo_types  # the base Dry rows are untouched
+    assert len(row_set.rates) < len(default_row_set.rates)

@@ -281,3 +281,30 @@ def test_cse_special_note_matches_ground_truth():
             gv = _normalize(g.get(field_name))
             ev = _normalize(e.get(field_name))
             assert gv == ev, f"row {i}: {field_name}: {gv!r} != {ev!r}"
+
+
+def test_cse_skip_dg_generation_suppresses_dg_rows_for_one_sheet_only():
+    """Toggling it off for "CSE" alone must not touch "CSE (MAOVLD)"'s own
+    DG rows - each raw sheet is its own commodity group, keyed by its own
+    default description."""
+    default_row_set = _run_cse()
+    main_default_cgo_types = {
+        r.cgo_type for r in default_row_set.rates if r.commodity_group_description == COMMODITY_MAIN[0]
+    }
+    assert "DG" in main_default_cgo_types
+
+    wb = openpyxl.load_workbook(PATH, data_only=True)
+    parser = CSEParser()
+    profile = MappingProfile(skip_dg_generation={COMMODITY_MAIN[0]: True})
+    row_set = parser.run(wb, profile)
+
+    main_cgo_types = {r.cgo_type for r in row_set.rates if r.commodity_group_description == COMMODITY_MAIN[0]}
+    assert "DG" not in main_cgo_types
+    assert "DR" in main_cgo_types
+
+    maovld_cgo_types = {
+        r.cgo_type for r in row_set.rates if r.commodity_group_description == COMMODITY_MAOVLD[0]
+    }
+    assert "DG" in maovld_cgo_types  # untouched - only "CSE" was opted out
+
+    assert len(row_set.rates) < len(default_row_set.rates)

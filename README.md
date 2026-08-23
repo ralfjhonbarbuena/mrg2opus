@@ -111,6 +111,16 @@ already-built rows/blocks (`parsers/common/ordering.py::reorder_row_set()`),
 applied identically to what gets written to the downloaded file - not
 just the in-browser preview.
 
+**Opting out of DG (Dangerous Goods) duplicate rows.** Every lane's base
+Dry (D/DR) rows normally also file an identical D/DG variant at the same
+rate - a standing filing convention verified against ground truth, not
+derived from any raw sheet. Step 3's commodity table has a **Skip DG**
+checkbox per group: check it to stop that group's D/DG duplicates from
+being generated at all (the D/DR rows are unaffected). Unchecked (the
+default) keeps the existing behavior. EAF's TZDAR and KEMBA sub-lanes
+share one toggle, same as every other per-group override in this table -
+see `MappingProfile.skip_dg_generation`.
+
 **If output looks stale, re-parse.** Step 2 caches its parse for the whole
 session, and re-uploading the same filenames does not by itself force a
 re-run. Use Step 2's **↻ Re-parse from source** button (it clears the

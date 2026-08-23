@@ -112,3 +112,30 @@ def test_laec_cmdt_note_merges_when_descriptions_match():
             gv = _normalize(g.get(field_name))
             ev = _normalize(e.get(field_name))
             assert gv == ev, f"row {i}: {field_name}: {gv!r} != {ev!r}"
+
+
+def test_laec_skip_dg_generation_suppresses_dg_rows_for_one_group_only():
+    """Toggling it off for the Non-ISC main group alone must not touch the
+    ISC main group's own DG rows - this lane has multiple independent
+    commodity groups, each keyed by its own default description."""
+    default_row_set = _run_laec()
+    non_isc_default_cgo_types = {
+        r.cgo_type for r in default_row_set.rates if r.commodity_group_description == COMMODITY_NON_ISC_MAIN[1]
+    }
+    assert "DG" in non_isc_default_cgo_types
+
+    wb = openpyxl.load_workbook(PATH, data_only=True)
+    parser = LAECParser()
+    profile = MappingProfile(skip_dg_generation={COMMODITY_NON_ISC_MAIN[1]: True})
+    row_set = parser.run(wb, profile)
+
+    non_isc_cgo_types = {
+        r.cgo_type for r in row_set.rates if r.commodity_group_description == COMMODITY_NON_ISC_MAIN[1]
+    }
+    assert "DG" not in non_isc_cgo_types
+    assert "DR" in non_isc_cgo_types
+
+    isc_cgo_types = {r.cgo_type for r in row_set.rates if r.commodity_group_description == "FAK_ISC"}
+    assert "DG" in isc_cgo_types  # untouched - only the Non-ISC main group was opted out
+
+    assert len(row_set.rates) < len(default_row_set.rates)

@@ -210,7 +210,7 @@ class EAFParser(BaseMRGParser):
                 # variant at the same rate - same standing filing convention
                 # confirmed for SAF, holds across both EAF sub-lanes too
                 # (84/84 ground-truth rows split exactly 42 DR / 42 DG).
-                if self.container_map.cgo_type == "DR":
+                if self.container_map.cgo_type == "DR" and not config.skip_dg_generation.get(DEFAULT_COMMODITY_DESCRIPTION, False):
                     dg_row = row.model_copy(update={"cgo_type": "DG"})
                     dg_rows.append(dg_row)
                     dg_pp.extend(explode_rates_row(dg_row))

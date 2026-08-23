@@ -49,3 +49,10 @@ class MappingProfile(BaseModel):
     commodity_group_order: list[str] = Field(default_factory=list)
     # OPUS sheet name -> True to skip writing it to the output workbook
     skip_output_sheets: dict[str, bool] = Field(default_factory=dict)
+    # default_description -> True to skip generating that group's DG
+    # (Dangerous Goods) duplicate rows. Every lane's base Dry (D/DR) row
+    # normally also files an identical D/DG variant at the same rate - a
+    # standing filing convention, not derived from the raw sheet (see each
+    # parser's own comment at its `cgo_type == "DR"` check). Absent/False
+    # keeps that default behavior; True suppresses it for that one group.
+    skip_dg_generation: dict[str, bool] = Field(default_factory=dict)

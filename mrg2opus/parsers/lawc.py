@@ -550,7 +550,7 @@ class LAWCParser(BaseMRGParser):
                 dest_name_map = {row.destination_code: row.destination_description}
                 pp_code, pp_description = PP_COMMODITY[code]
                 dr_pp.extend(_remap_pp_commodity(_explode_lawc(row, origin_name_map, dest_name_map), pp_code, pp_description))
-                if self.container_map.cgo_type == "DR":
+                if self.container_map.cgo_type == "DR" and not config.skip_dg_generation.get(default_description, False):
                     dg_row = row.model_copy(update={"cgo_type": "DG"})
                     dg_rows.append(dg_row)
                     dg_pp.extend(

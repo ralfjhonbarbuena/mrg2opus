@@ -490,7 +490,7 @@ class CSEParser(BaseMRGParser):
                 dr_rows.append(row)
                 dr_pp.extend(explode_rates_row(row))
 
-                if self.container_map.cgo_type == "DR":
+                if self.container_map.cgo_type == "DR" and not config.skip_dg_generation.get(default_description, False):
                     dg_row = row.model_copy(update={"cgo_type": "DG"})
                     dg_rows.append(dg_row)
                     dg_pp.extend(explode_rates_row(dg_row))

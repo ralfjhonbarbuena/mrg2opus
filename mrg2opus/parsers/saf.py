@@ -220,7 +220,7 @@ class SAFParser(BaseMRGParser):
             # same rate, only CGO TYPE flips DR->DG). This is NOT derivable
             # from anything in the raw SAF sheet itself; it's a standing
             # filing convention.
-            if self.container_map.cgo_type == "DR":
+            if self.container_map.cgo_type == "DR" and not config.skip_dg_generation.get(DEFAULT_COMMODITY_DESCRIPTION, False):
                 dg_row = row.model_copy(update={"cgo_type": "DG"})
                 dg_rows.append(dg_row)
                 dg_pp.extend(explode_rates_row(dg_row))

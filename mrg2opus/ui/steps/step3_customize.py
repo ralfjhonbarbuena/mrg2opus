@@ -69,7 +69,9 @@ def render(state: WizardState) -> None:
         "with a sensible default but are always yours to change too. This table doesn't support mouse dragging "
         "to reorder rows, but the **Order** column does the same job: give groups numbers to set the sequence "
         "they'll appear in on the generated OPUS RATES / RATES PORT-PORT / CMDT NOTE sheets - lower numbers "
-        "come first. Two (or more) groups given the exact same Description merge into one CMDT NOTE block."
+        "come first. Two (or more) groups given the exact same Description merge into one CMDT NOTE block. "
+        "**Skip DG** stops that group's base Dry rows from also filing an identical D/DG duplicate - check it "
+        "for a group that shouldn't carry a Dangerous Goods rate at all."
     )
     if groups:
         existing_order = state.profile.commodity_group_order
@@ -87,6 +89,7 @@ def render(state: WizardState) -> None:
                 "code": state.profile.commodity_code_overrides.get(desc, code),
                 "description": state.profile.commodity_description_overrides.get(desc, desc),
                 "override_cmdt_seq": state.profile.commodity_sequence_overrides.get(desc),
+                "skip_dg": state.profile.skip_dg_generation.get(desc, False),
             }
             for i, (code, desc) in enumerate(groups)
         ]
@@ -96,7 +99,7 @@ def render(state: WizardState) -> None:
             hide_index=True,
             width="stretch",
             disabled=["default_code", "default_description"],
-            column_order=["order", "default_code", "default_description", "code", "description", "override_cmdt_seq"],
+            column_order=["order", "default_code", "default_description", "code", "description", "override_cmdt_seq", "skip_dg"],
             column_config={
                 "order": st.column_config.NumberColumn("Order", step=1, required=True, help="Lower numbers appear first in the output."),
                 "default_code": st.column_config.TextColumn("Parsed default code"),
@@ -104,6 +107,7 @@ def render(state: WizardState) -> None:
                 "code": st.column_config.TextColumn("Code (yours)", required=True),
                 "description": st.column_config.TextColumn("Description (yours)", required=True),
                 "override_cmdt_seq": st.column_config.NumberColumn("Override CMDT Seq", step=1),
+                "skip_dg": st.column_config.CheckboxColumn("Skip DG", help="Don't file a D/DG duplicate for this group's base Dry rows."),
             },
             key="commodity_overrides_editor",
         )
@@ -149,6 +153,9 @@ def render(state: WizardState) -> None:
                 if r.get("override_cmdt_seq") not in (None, "")
             }
             skip_output_sheets = {name: skip for name, skip in skip_choices.items() if skip}
+            skip_dg_generation = {
+                r["default_description"]: True for r in edited if r.get("skip_dg")
+            }
             # The FINAL description (post-override) of each row, sorted by
             # its "Order" value - this is what actually ends up on the
             # output rows, so it's what group_order needs to match against
@@ -165,6 +172,7 @@ def render(state: WizardState) -> None:
                     "commodity_sequence_overrides": sequence_overrides,
                     "commodity_group_order": commodity_group_order,
                     "skip_output_sheets": skip_output_sheets,
+                    "skip_dg_generation": skip_dg_generation,
                 }
             )
 
