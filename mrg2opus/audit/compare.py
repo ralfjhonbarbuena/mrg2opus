@@ -155,18 +155,25 @@ class CmdtBlock:
 
 
 def reconstruct_blocks(rows: list[dict[str, Any]]) -> list[CmdtBlock]:
-    """A row with non-None header_seq OR note_seq starts a new block
-    (mirrors the writer's own fill-down convention, see
-    excel_io/writer.py); every following row until the next such marker
-    belongs to it. Blocks are keyed by the parent's `contents` text - the
-    block's human-readable identity, stable regardless of row order."""
+    """A row with non-blank `contents` starts a new block (the block's
+    parent/header row - children leave `contents` blank via fill-down,
+    the same invariant already used to key each block's identity below);
+    every following blank-contents row belongs to it.
+
+    Detecting boundaries via `contents` rather than `header_seq`/
+    `note_seq` is required: those sequence numbers are assigned by the
+    writer at Excel-export time, not present on a freshly-parsed
+    OpusRowSet before it's ever been written - header_seq/note_seq are
+    None on EVERY row (including parents) straight out of a parser, so
+    detecting via them only works when comparing two already-written
+    files, not the Compare feature's actual use case (a fresh parse vs.
+    a reference file)."""
     blocks: list[CmdtBlock] = []
     current: CmdtBlock | None = None
     for row in rows:
-        is_parent = row.get("header_seq") is not None or row.get("note_seq") is not None
-        if is_parent:
-            key = str(row.get("contents") or "").strip()
-            current = CmdtBlock(key=key, parent=row, children=[])
+        contents = str(row.get("contents") or "").strip()
+        if contents:
+            current = CmdtBlock(key=contents, parent=row, children=[])
             blocks.append(current)
         elif current is not None:
             current.children.append(row)

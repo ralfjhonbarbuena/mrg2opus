@@ -112,6 +112,21 @@ def test_reconstruct_blocks_groups_children_under_parent():
     assert len(blocks[1].children) == 0
 
 
+def test_reconstruct_blocks_detects_parent_via_contents_when_seq_fields_are_none():
+    """Regression test: a freshly-parsed OpusRowSet's CmdtNoteRows never
+    have header_seq/note_seq set (those are writer-assigned at Excel
+    export time) - reconstruct_blocks must still detect block boundaries
+    via `contents` alone in that case."""
+    rows = [
+        _cmdt_row(header_seq=None, note_seq=None, contents="Block A", charge_seq=1, code="PSS"),
+        _cmdt_row(header_seq=None, note_seq=None, contents=None, charge_seq=2, code="OBS"),
+    ]
+    blocks = reconstruct_blocks(rows)
+    assert [b.key for b in blocks] == ["Block A"]
+    assert len(blocks[0].children) == 1
+    assert blocks[0].children[0]["code"] == "OBS"
+
+
 def test_diff_cmdt_blocks_matched_identical():
     generated = [
         _cmdt_row(header_seq=1, note_seq=1, contents="Block A", charge_seq=1, code="PSS"),
