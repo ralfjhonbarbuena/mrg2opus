@@ -132,6 +132,16 @@ not the name) is enough; it doesn't require every cell to be marked. See
 `parsers/common/exclusion.py::location_is_excluded()` and
 `parsers/common/header_grid.py::flatten_pod_header()`.
 
+**Compare mode: check an existing OPUS file against its source MRG.** A
+second top-level mode (switch at the top of the app, separate from the
+4-step wizard) - upload the raw MRG file(s) plus an existing OPUS-format
+Excel file (e.g. a filing someone already produced), and see a row-level
+and field-level diff across all 5 OPUS sheet types the lane produces.
+Choose whether to check the MRG as grouped (RATES), exploded (RATES
+PORT-PORT), or both - both are always derived from the same parse, this
+only controls what gets compared. See
+`mrg2opus/audit/compare.py`/`mrg2opus/ui/compare_page.py`.
+
 **CLI (Phase 1, still available for scripting):**
 
 ```bash
