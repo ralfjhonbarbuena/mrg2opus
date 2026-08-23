@@ -2,8 +2,10 @@
 
     ./.venv/Scripts/python.exe -m streamlit run mrg2opus/ui/app.py
 
-4-step linear wizard: upload+classify -> preview -> customize -> export.
-Each step is a module in mrg2opus/ui/steps/ with a render(state) function.
+Two modes, selected at the top: "Convert" (the 4-step wizard:
+upload+classify -> preview -> customize -> export) and "Compare"
+(standalone: upload an MRG plus a reference OPUS file, see where they
+diverge - see docs/superpowers/specs/2026-08-23-mrg-opus-comparison-design.md).
 """
 from __future__ import annotations
 
@@ -12,6 +14,7 @@ import streamlit as st
 # Importing the lane modules registers their LayoutProfile as a side effect -
 # same requirement as cli.py.
 from mrg2opus.parsers import cse, eaf, laec, lawc, saf  # noqa: F401
+from mrg2opus.ui import compare_page
 from mrg2opus.ui.state import get_state
 from mrg2opus.ui.steps import step1_upload, step2_preview, step3_customize, step4_export
 
@@ -33,6 +36,13 @@ STEP_RENDERERS = {
 def main() -> None:
     st.set_page_config(page_title="mrg2opus", layout="wide")
     st.title("MRG → OPUS Converter")
+
+    mode = st.radio("Mode", options=["Convert", "Compare"], horizontal=True)
+    st.divider()
+
+    if mode == "Compare":
+        compare_page.render()
+        return
 
     state = get_state()
 
