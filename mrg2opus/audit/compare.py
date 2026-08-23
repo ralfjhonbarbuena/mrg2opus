@@ -145,3 +145,67 @@ def diff_by_key(
             matched += 1
 
     return KeyedDiffResult(matched=matched, missing=missing, extra=extra, field_mismatches=field_mismatches)
+
+
+@dataclass
+class CmdtBlock:
+    key: str
+    parent: dict[str, Any]
+    children: list[dict[str, Any]] = field(default_factory=list)
+
+
+def reconstruct_blocks(rows: list[dict[str, Any]]) -> list[CmdtBlock]:
+    """A row with non-None header_seq OR note_seq starts a new block
+    (mirrors the writer's own fill-down convention, see
+    excel_io/writer.py); every following row until the next such marker
+    belongs to it. Blocks are keyed by the parent's `contents` text - the
+    block's human-readable identity, stable regardless of row order."""
+    blocks: list[CmdtBlock] = []
+    current: CmdtBlock | None = None
+    for row in rows:
+        is_parent = row.get("header_seq") is not None or row.get("note_seq") is not None
+        if is_parent:
+            key = str(row.get("contents") or "").strip()
+            current = CmdtBlock(key=key, parent=row, children=[])
+            blocks.append(current)
+        elif current is not None:
+            current.children.append(row)
+    return blocks
+
+
+@dataclass
+class BlockDiffResult:
+    missing_blocks: list[str] = field(default_factory=list)
+    extra_blocks: list[str] = field(default_factory=list)
+    field_mismatches: list[tuple[str, int, str, Any, Any]] = field(default_factory=list)
+
+
+def diff_cmdt_blocks(generated: list[dict[str, Any]], expected: list[dict[str, Any]], fields: list[str]) -> BlockDiffResult:
+    """CMDT NOTE / SPECIAL NOTE have no reliable per-row key (children
+    share their parent's blank header_seq/note_seq) and a reference
+    file's row order isn't guaranteed to match the generator's - unlike
+    golden tests, which only ever compare against one exact known sample
+    and can safely assume matching order. Blocks are matched by
+    contents-text key; for matched blocks, child rows are compared
+    positionally - the fragile ordering assumption is scoped to one
+    block's internal order, not the whole sheet."""
+    gen_blocks = {b.key: b for b in reconstruct_blocks(generated)}
+    exp_blocks = {b.key: b for b in reconstruct_blocks(expected)}
+
+    missing_blocks = sorted(set(exp_blocks) - set(gen_blocks))
+    extra_blocks = sorted(set(gen_blocks) - set(exp_blocks))
+
+    field_mismatches: list[tuple[str, int, str, Any, Any]] = []
+    for key in set(gen_blocks) & set(exp_blocks):
+        g_block, e_block = gen_blocks[key], exp_blocks[key]
+        g_rows = [g_block.parent, *g_block.children]
+        e_rows = [e_block.parent, *e_block.children]
+        for idx, (g_row, e_row) in enumerate(zip(g_rows, e_rows)):
+            for field_name in fields:
+                gv, ev = _normalize(g_row.get(field_name)), _normalize(e_row.get(field_name))
+                if gv != ev:
+                    field_mismatches.append((key, idx, field_name, gv, ev))
+        if len(g_rows) != len(e_rows):
+            field_mismatches.append((key, -1, "_row_count", len(g_rows), len(e_rows)))
+
+    return BlockDiffResult(missing_blocks=missing_blocks, extra_blocks=extra_blocks, field_mismatches=field_mismatches)

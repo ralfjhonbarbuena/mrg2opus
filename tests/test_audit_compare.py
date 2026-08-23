@@ -88,3 +88,59 @@ def test_diff_by_key_respects_ignore_fields():
     )
     assert result.matched == 1
     assert result.field_mismatches == []
+
+
+from mrg2opus.audit.compare import diff_cmdt_blocks, reconstruct_blocks
+
+
+def _cmdt_row(header_seq=None, note_seq=None, contents=None, charge_seq=None, code=None, amount=None) -> dict:
+    row = dict.fromkeys(cols.CMDT_NOTE_ROW_FIELDS)
+    row.update(header_seq=header_seq, note_seq=note_seq, contents=contents, charge_seq=charge_seq, code=code, amount=amount)
+    return row
+
+
+def test_reconstruct_blocks_groups_children_under_parent():
+    rows = [
+        _cmdt_row(header_seq=1, note_seq=1, contents="Block A", charge_seq=1, code="PSS"),
+        _cmdt_row(charge_seq=2, code="OBS"),
+        _cmdt_row(header_seq=2, note_seq=2, contents="Block B", charge_seq=1, code="EFS"),
+    ]
+    blocks = reconstruct_blocks(rows)
+    assert [b.key for b in blocks] == ["Block A", "Block B"]
+    assert len(blocks[0].children) == 1
+    assert blocks[0].children[0]["code"] == "OBS"
+    assert len(blocks[1].children) == 0
+
+
+def test_diff_cmdt_blocks_matched_identical():
+    generated = [
+        _cmdt_row(header_seq=1, note_seq=1, contents="Block A", charge_seq=1, code="PSS"),
+        _cmdt_row(charge_seq=2, code="OBS"),
+    ]
+    expected = [
+        _cmdt_row(header_seq=1, note_seq=1, contents="Block A", charge_seq=1, code="PSS"),
+        _cmdt_row(charge_seq=2, code="OBS"),
+    ]
+    result = diff_cmdt_blocks(generated, expected, cols.CMDT_NOTE_ROW_FIELDS)
+    assert result.missing_blocks == []
+    assert result.extra_blocks == []
+    assert result.field_mismatches == []
+
+
+def test_diff_cmdt_blocks_missing_and_extra():
+    generated = [_cmdt_row(header_seq=1, note_seq=1, contents="Only Generated", charge_seq=1, code="PSS")]
+    expected = [_cmdt_row(header_seq=1, note_seq=1, contents="Only Reference", charge_seq=1, code="PSS")]
+    result = diff_cmdt_blocks(generated, expected, cols.CMDT_NOTE_ROW_FIELDS)
+    assert result.missing_blocks == ["Only Reference"]
+    assert result.extra_blocks == ["Only Generated"]
+
+
+def test_diff_cmdt_blocks_field_mismatch_within_matched_block():
+    generated = [_cmdt_row(header_seq=1, note_seq=1, contents="Block A", charge_seq=1, code="PSS", amount=100)]
+    expected = [_cmdt_row(header_seq=1, note_seq=1, contents="Block A", charge_seq=1, code="PSS", amount=200)]
+    result = diff_cmdt_blocks(generated, expected, cols.CMDT_NOTE_ROW_FIELDS)
+    assert result.missing_blocks == []
+    assert result.extra_blocks == []
+    assert len(result.field_mismatches) == 1
+    key, idx, field_name, gv, ev = result.field_mismatches[0]
+    assert (key, idx, field_name, gv, ev) == ("Block A", 0, "amount", 100, 200)
