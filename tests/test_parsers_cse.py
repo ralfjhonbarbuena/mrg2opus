@@ -3,6 +3,7 @@ from __future__ import annotations
 import openpyxl
 from openpyxl.styles import Font, PatternFill
 
+from mrg2opus.audit.compare import arbs_row_key
 from mrg2opus.parsers.cse import COMMODITY_MAIN, COMMODITY_MAOVLD, COMMODITY_NOR_MAOVLD, COMMODITY_NOR_PA, COMMODITY_VE, CSEParser
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema import opus_columns as cols
@@ -127,10 +128,6 @@ def test_cse_cmdt_note_merges_when_descriptions_match():
             assert gv == ev, f"row {i}: {field_name}: {gv!r} != {ev!r}"
 
 
-def _arbs_key(row: dict) -> tuple:
-    return (row.get("point"), row.get("over"), row.get("per"))
-
-
 # Known, verified gap: a handful of inland Chinese ARBS origins whose
 # ground-truth description matches neither the raw sheet's own text nor
 # this Location Bank cleanly:
@@ -154,8 +151,8 @@ def test_cse_arbs_matches_ground_truth():
     generated = [r.model_dump() for r in row_set.arbs]
     expected = read_arbs_sheet(PATH)
 
-    gen_by_key = {_arbs_key(r): r for r in generated}
-    exp_by_key = {_arbs_key(r): r for r in expected}
+    gen_by_key = {arbs_row_key(r): r for r in generated}
+    exp_by_key = {arbs_row_key(r): r for r in expected}
 
     missing = set(exp_by_key) - set(gen_by_key)
     extra = set(gen_by_key) - set(exp_by_key)

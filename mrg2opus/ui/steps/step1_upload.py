@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import hashlib
-import io
-
-import openpyxl
 import streamlit as st
 
-from mrg2opus.excel_io.merge import DuplicateSheetError, merge_workbooks
-from mrg2opus.parsers.registry import all_profiles, classify_all
+from mrg2opus.excel_io.merge import DuplicateSheetError
+from mrg2opus.parsers.registry import all_profiles
 from mrg2opus.presets.models import MappingProfile
+from mrg2opus.ui.mrg_upload import fingerprint_uploads, load_and_classify
 from mrg2opus.ui.state import WizardState
 
 
@@ -27,14 +24,7 @@ def render(state: WizardState) -> None:
 
     names = [f.name for f in uploaded]
     payloads = [f.getvalue() for f in uploaded]
-    # Fingerprint names AND contents: a file re-uploaded under the same name
-    # after being edited must invalidate the cache, which a names-only
-    # comparison would miss (it would keep showing the old file's results).
-    fingerprint = hashlib.sha256()
-    for name, payload in zip(names, payloads):
-        fingerprint.update(name.encode("utf-8"))
-        fingerprint.update(hashlib.sha256(payload).digest())
-    upload_key = fingerprint.hexdigest()
+    upload_key = fingerprint_uploads(names, payloads)
 
     if upload_key != state.upload_key:
         # New file set (or edited contents) - reset anything downstream so a
@@ -55,16 +45,13 @@ def render(state: WizardState) -> None:
 
     if state.workbook is None:
         try:
-            workbooks = [openpyxl.load_workbook(io.BytesIO(payload), data_only=True) for payload in payloads]
-        except Exception as exc:  # noqa: BLE001 - surfaced directly to the user, not swallowed
-            st.error(f"Couldn't open one of these as an Excel workbook: {exc}")
-            return
-        try:
-            state.workbook = merge_workbooks(workbooks)
+            state.workbook, state.classification_results = load_and_classify(payloads)
         except DuplicateSheetError as exc:
             st.error(str(exc))
             return
-        state.classification_results = classify_all(state.workbook)
+        except Exception as exc:  # noqa: BLE001 - surfaced directly to the user, not swallowed
+            st.error(f"Couldn't open one of these as an Excel workbook: {exc}")
+            return
 
     label = state.upload_names[0] if len(state.upload_names) == 1 else f"{len(state.upload_names)} files"
     st.success(f"Loaded **{label}** — sheets: {', '.join(state.workbook.sheetnames)}")

@@ -562,6 +562,77 @@ versions of these for LAWC or future lanes without checking here first:
 exploded copies — confirmed these are grouped-view-only fields across
 every lane examined so far.
 
+## 3.11 Standalone Compare mode: MRG vs. reference OPUS file
+
+User-requested, deliberately separate from the wizard (not a step in it,
+and separate from the still-pending Phase 3 Audit Gate spec's internal
+self-check rules - see that spec's own section once it's built): upload
+raw MRG file(s) plus an existing OPUS-format Excel file, and see where
+mrg2opus's own parse of the MRG diverges from that reference file, across
+all 5 OPUS sheet types.
+
+Promotes `tests/golden.py`'s sheet-reading and keyed-diff logic
+(`read_rates_sheet`/`read_arbs_sheet`/etc., `diff_rates`/`rates_row_key`)
+- previously test-only - into a new production module
+`mrg2opus/audit/compare.py`, generalized as `diff_by_key(generated,
+expected, key_fn, fields, ignore_fields)`. `golden.py` now delegates to
+it (thin path-loading wrappers preserving every existing test file's
+exact call signature - verified via grep before the refactor that
+`_normalize` and `_normalize_cmdt_value` are both still directly imported
+by different lane test files and are NOT touched by this refactor, only
+the sheet readers and `diff_rates`/`rates_row_key` are).
+
+CMDT NOTE / SPECIAL NOTE can't reuse the keyed diff - no reliable per-row
+key exists (child rows share their parent's blank `header_seq`/
+`note_seq`), and a reference file's row order isn't guaranteed to match
+the generator's the way it is when golden tests always compare against
+one exact known sample. `diff_cmdt_blocks()` reconstructs each side's
+block structure independently (a non-blank `contents` starts a block;
+the following blank-`contents` rows belong to it - mirrors the writer's
+own fill-down convention), keys blocks by the parent's `contents` text, and only
+compares child rows positionally *within* a matched block - scoping the
+fragile ordering assumption to one block instead of the whole sheet.
+
+UI: a `st.radio("Mode", ["Convert", "Compare"])` at the top of `app.py`
+(unrelated to and doesn't renumber the wizard's own 4 steps). Compare's
+upload+classify logic is shared with the wizard's Step 1 via a new
+`mrg2opus/ui/mrg_upload.py` (`fingerprint_uploads`, `load_and_classify`)
+instead of two copies. A "Generate MRG as: Grouped (RATES) / Exploded
+(RATES PORT-PORT) / Both" selector controls which of the two derived
+RATES forms get compared - not a second parse path, since
+`RatesPortPortRow` is always a deterministic transform of `RatesRow`
+(`explode_rates_row()`). `CompareState` (in `compare_page.py`, not
+`ui/state.py` - it has exactly one consumer) caches against a sha256
+fingerprint of the MRG file(s) AND the reference file together, same
+pattern as `WizardState.upload_key` (§3.10) - re-uploading either with
+edited contents correctly invalidates the cached parse/comparison.
+
+Full spec: `docs/superpowers/specs/2026-08-23-mrg-opus-comparison-design.md`.
+Test coverage: `tests/test_audit_compare.py` (readers, keyed diff, block
+diff), `tests/test_compare_engine_regression.py` (the new engine against
+all 5 bundled samples' own ground truth), `tests/test_mrg_upload.py`,
+`tests/test_compare_page.py`.
+
+**Real bug found and fixed during implementation:** `reconstruct_blocks()`
+originally detected a block's parent row via non-None `header_seq`/
+`note_seq`. Those fields are writer-assigned at Excel-export time and are
+always `None` on a freshly-parsed `OpusRowSet`, including on parent rows -
+so comparing a fresh parse against a reference file (the feature's actual
+primary use case) always reported every real CMDT NOTE/SPECIAL NOTE block
+as "missing," even when content was identical. Neither this task's own
+review nor Task 2's original review caught it, because every test
+fixture in both tasks set `header_seq`/`note_seq` and `contents` together
+- detection never actually depended on which field was checked. Fixed by
+detecting via non-blank `contents` instead (already used for block
+identity, verified non-blank on parents and blank on children in both
+the fresh-parse and written-then-reread representations) - see commit
+`4661ed6` and the regression test
+`test_reconstruct_blocks_detects_parent_via_contents_when_seq_fields_are_none`
+in `tests/test_audit_compare.py`. The Compare UI's `ignore_fields`
+handling (added in the final-review fix wave) reuses each lane's
+already-documented golden-test ignore sets - see
+`RATES_IGNORE_FIELDS_BY_LANE` etc. in `mrg2opus/audit/compare.py`.
+
 ## 5. Files touched this session (everything above is new)
 
 Nothing pre-existed before this session — the whole `mrg2opus/` package,
