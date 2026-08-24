@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import openpyxl
+import pandas as pd
 import streamlit as st
 from openpyxl.workbook import Workbook
 
@@ -34,6 +35,7 @@ from mrg2opus.excel_io.merge import DuplicateSheetError
 from mrg2opus.parsers.registry import ClassificationResult, get_profile
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema import opus_columns as cols
+from mrg2opus.ui.errors import show_error
 from mrg2opus.ui.mrg_upload import fingerprint_uploads, load_and_classify
 from mrg2opus.ui.parsing import run_parser
 
@@ -51,6 +53,12 @@ class CompareState:
     apply_known_gaps: bool = True
     row_sets: dict[str, Any] | None = None
     compare_results: list[dict[str, Any]] | None = None
+    # (lane_id, rates_mode, apply_known_gaps) at the moment compare_results
+    # was computed - lets render() detect when the visible results no
+    # longer match the current control settings, instead of silently
+    # showing a stale comparison after the user changes lane/mode/toggle
+    # without re-clicking Run Comparison.
+    results_computed_for: tuple[str | None, str, bool] | None = None
 
 
 def _get_state() -> CompareState:
@@ -176,6 +184,28 @@ def _run_comparison(row_sets: dict, ref_wb: Workbook, rates_mode: str, lane_id: 
     return results
 
 
+_DETAIL_ROW_LIMIT = 50
+
+
+def _render_detail_table(label: str, rows: list[dict], key: str) -> None:
+    """One missing/extra/field_mismatches table: truncates the ON-SCREEN
+    view at _DETAIL_ROW_LIMIT rows (a large real-world mismatch count
+    would otherwise make Streamlit's grid unwieldy), but always offers the
+    FULL untruncated list as a CSV - the on-screen cap should never be the
+    only way to see a discrepancy."""
+    st.markdown(f"**{label}** ({len(rows)})")
+    st.dataframe(rows[:_DETAIL_ROW_LIMIT], hide_index=True, width="stretch")
+    if len(rows) > _DETAIL_ROW_LIMIT:
+        st.caption(f"Showing {_DETAIL_ROW_LIMIT} of {len(rows)} - download the full list below to see the rest.")
+        st.download_button(
+            f"⬇ Download all {len(rows)} rows as CSV",
+            data=pd.DataFrame(rows).to_csv(index=False).encode("utf-8"),
+            file_name=f"{key}.csv",
+            mime="text/csv",
+            key=f"download_{key}",
+        )
+
+
 def _render_results(results: list[dict]) -> None:
     if not results:
         st.info("Nothing to compare - the parsed MRG produced no rows for the sheet type(s) selected.")
@@ -208,15 +238,13 @@ def _render_results(results: list[dict]) -> None:
                     f"Reference workbook has no sheet matching **{r['sheet_name']}** - "
                     "every generated row is listed as extra."
                 )
+            row_key = f"{r['sheet_type']}_{r['sub_lane']}".replace(" ", "_")
             if r["missing"]:
-                st.markdown(f"**Missing** ({len(r['missing'])}, in reference but not generated)")
-                st.dataframe(r["missing"][:50], hide_index=True, width="stretch")
+                _render_detail_table("Missing (in reference but not generated)", r["missing"], f"{row_key}_missing")
             if r["extra"]:
-                st.markdown(f"**Extra** ({len(r['extra'])}, generated but not in reference)")
-                st.dataframe(r["extra"][:50], hide_index=True, width="stretch")
+                _render_detail_table("Extra (generated but not in reference)", r["extra"], f"{row_key}_extra")
             if r["field_mismatches"]:
-                st.markdown(f"**Field mismatches** ({len(r['field_mismatches'])})")
-                st.dataframe(r["field_mismatches"][:50], hide_index=True, width="stretch")
+                _render_detail_table("Field mismatches", r["field_mismatches"], f"{row_key}_field_mismatches")
             if r["found_in_reference"] and not r["missing"] and not r["extra"] and not r["field_mismatches"]:
                 st.success("No differences found.")
 
@@ -261,14 +289,22 @@ def render() -> None:
             st.error(str(exc))
             return
         except Exception as exc:  # noqa: BLE001 - surfaced directly to the user, not swallowed
-            st.error(f"Couldn't open one of the MRG files: {exc}")
+            show_error(
+                "Couldn't open one of the MRG files. It may not be a valid .xlsx file, "
+                "or the file could be corrupted.",
+                exc,
+            )
             return
 
     if state.reference_workbook is None:
         try:
             state.reference_workbook = openpyxl.load_workbook(io.BytesIO(reference_payload), data_only=True)
         except Exception as exc:  # noqa: BLE001
-            st.error(f"Couldn't open the reference OPUS file: {exc}")
+            show_error(
+                "Couldn't open the reference OPUS file. It may not be a valid .xlsx file, "
+                "or the file could be corrupted.",
+                exc,
+            )
             return
 
     results = state.classification_results
@@ -298,12 +334,20 @@ def render() -> None:
              "(e.g. `type`, externally-assigned sequence numbers) - see MIGRATION_NOTES.md.",
     )
 
+    current_settings = (state.selected_lane_id, state.rates_mode, state.apply_known_gaps)
+
     if st.button("Run Comparison", type="primary"):
         parser_cls = get_profile(state.selected_lane_id).parser_cls
         parser = parser_cls()
         with st.spinner("Parsing MRG..."):
             state.row_sets = run_parser(parser, state.workbook, MappingProfile())
         state.compare_results = _run_comparison(state.row_sets, state.reference_workbook, state.rates_mode, state.selected_lane_id, state.apply_known_gaps)
+        state.results_computed_for = current_settings
 
     if state.compare_results is not None:
+        if state.results_computed_for != current_settings:
+            st.warning(
+                "⚠️ Lane, RATES mode, or the known-gaps toggle changed since this comparison ran - "
+                "click **Run Comparison** to refresh before trusting these results."
+            )
         _render_results(state.compare_results)

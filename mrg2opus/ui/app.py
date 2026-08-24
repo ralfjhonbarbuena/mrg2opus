@@ -51,10 +51,16 @@ def main() -> None:
         with col:
             if step_num == state.step:
                 st.markdown(f"**➤ {label}**")
-            elif step_num < state.step:
-                st.markdown(f"✅ {label}")
             else:
-                st.markdown(f"{label}")
+                prefix = "✅ " if step_num < state.step else ""
+                # Every step's own render() already checks its prerequisites
+                # (state.workbook/row_sets) and shows a "go back" prompt if
+                # they're missing, so jumping directly to any step - not
+                # just completed ones - degrades gracefully rather than
+                # erroring.
+                if st.button(f"{prefix}{label}", key=f"step_nav_{step_num}", width="stretch"):
+                    state.step = step_num
+                    st.rerun()
     st.divider()
 
     STEP_RENDERERS[state.step](state)

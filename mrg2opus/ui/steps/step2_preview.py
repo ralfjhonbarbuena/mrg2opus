@@ -6,6 +6,7 @@ import streamlit as st
 from mrg2opus.parsers.registry import get_profile
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.ui.commodity_utils import distinct_commodity_groups
+from mrg2opus.ui.errors import show_error
 from mrg2opus.ui.parsing import run_parser
 from mrg2opus.ui.state import WizardState
 
@@ -26,6 +27,20 @@ def _run_parser(state: WizardState, profile: MappingProfile) -> dict:
 
 
 def render(state: WizardState) -> None:
+    if state.workbook is None or state.selected_lane_id is None:
+        # Reachable now that the step navigator (app.py) lets a user jump
+        # straight here - previously this step was only ever reached via
+        # Step 1's own "Continue to Preview" button, which doesn't appear
+        # until a file is uploaded and classified, so this case was
+        # unreachable. Without this guard, _run_parser() below would fail
+        # on a None lane_id with a generic "Parsing failed" - misleading
+        # when the real issue is "you haven't uploaded anything yet".
+        st.warning("Nothing uploaded yet - go back to Upload & Classify.")
+        if st.button("← Back to Upload"):
+            state.step = 1
+            st.rerun()
+        return
+
     st.subheader(f"Preview — lane {state.selected_lane_id}")
 
     if state.row_sets is None:
@@ -33,7 +48,11 @@ def render(state: WizardState) -> None:
             try:
                 state.row_sets = _run_parser(state, state.profile)
             except Exception as exc:  # noqa: BLE001 - surfaced directly, this is a real parse failure
-                st.error(f"Parsing failed: {exc}")
+                show_error(
+                    "Parsing failed - this usually means something in the file doesn't match "
+                    "what this lane's parser expects.",
+                    exc,
+                )
                 if st.button("← Back to Upload"):
                     state.step = 1
                     st.rerun()

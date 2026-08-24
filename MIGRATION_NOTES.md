@@ -672,6 +672,48 @@ DR rows untouched, and (c) for the 3 multi-group lanes (LAWC, LAEC, CSE),
 a *sibling* group's DG rows are unaffected - proving the toggle is
 correctly scoped per group, not a lane-wide switch.
 
+## 3.13 UI quick wins: clickable step nav, friendlier errors, un-stale Compare results, full-list CSV downloads
+
+User-requested, from a general "what could improve the UI" pass:
+
+- **Clickable step navigator** (`ui/app.py`): the wizard's top step row
+  (previously plain `st.markdown` text) is now a row of buttons, so
+  jumping to any step - not just backward - works directly instead of
+  requiring the page's own "Continue"/"Back" buttons. Safe because every
+  step's `render()` already checks its own prerequisites before doing
+  real work.
+- **Friendlier error messages** (new `ui/errors.py::show_error()`): every
+  `except Exception` site that used to dump raw exception text straight
+  into `st.error(f"...: {exc}")` now shows a plain-language message with
+  the raw exception tucked behind a collapsed "Technical details"
+  expander - someone filing freight rates shouldn't have to parse a
+  Python/openpyxl traceback, but the detail is still one click away.
+  Applied in `step1_upload.py`, `step2_preview.py`, `step4_export.py`,
+  and `compare_page.py` (2 sites).
+- **Compare mode's results can no longer go silently stale**
+  (`compare_page.py`): `CompareState.results_computed_for` snapshots
+  `(lane_id, rates_mode, apply_known_gaps)` at the moment a comparison
+  runs; if the visible controls no longer match that snapshot, a warning
+  banner appears above the (still-shown) old results instead of letting
+  them sit there looking current.
+- **Full-list CSV download for truncated detail tables**
+  (`compare_page.py::_render_detail_table()`): the on-screen Missing/
+  Extra/Field-mismatches tables still cap at 50 rows (a large mismatch
+  count would make the grid unwieldy), but anything beyond that is now
+  always available as a full CSV download - previously the 51st row was
+  simply invisible with no indication more existed.
+
+**Bonus fix found while testing the clickable nav**: jumping straight to
+Step 2 with nothing uploaded yet used to hit `_run_parser()` with a
+`None` lane_id and show a generic "Parsing failed" - misleading, since
+the real issue was "you haven't uploaded a file yet". This state was
+unreachable before the nav became clickable (Step 2 was only ever
+reached via Step 1's own button, which doesn't appear until a file is
+loaded and classified) but is now a real path a user can hit. Step 2
+gained an upfront `state.workbook is None or state.selected_lane_id is
+None` guard with a clear "go back and upload" message, matching the
+pattern Steps 3/4 already had for their own prerequisites.
+
 ## 5. Files touched this session (everything above is new)
 
 Nothing pre-existed before this session — the whole `mrg2opus/` package,

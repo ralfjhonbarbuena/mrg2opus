@@ -8,6 +8,7 @@ import streamlit as st
 
 from mrg2opus.excel_io.writer import write_opus_workbook_multi
 from mrg2opus.schema.opus_rows import OpusRowSet
+from mrg2opus.ui.errors import show_error
 from mrg2opus.ui.state import WizardState, reset_state
 
 
@@ -79,7 +80,7 @@ def render(state: WizardState) -> None:
             try:
                 state.output_bytes = _build_workbook_bytes(state)
             except Exception as exc:  # noqa: BLE001 - a real write failure, surface it directly
-                st.error(f"Couldn't build the output workbook: {exc}")
+                show_error("Couldn't build the output workbook.", exc)
                 return
 
     if len(state.upload_names) == 1:

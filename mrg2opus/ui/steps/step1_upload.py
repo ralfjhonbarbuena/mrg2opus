@@ -5,6 +5,7 @@ import streamlit as st
 from mrg2opus.excel_io.merge import DuplicateSheetError
 from mrg2opus.parsers.registry import all_profiles
 from mrg2opus.presets.models import MappingProfile
+from mrg2opus.ui.errors import show_error
 from mrg2opus.ui.mrg_upload import fingerprint_uploads, load_and_classify
 from mrg2opus.ui.state import WizardState
 
@@ -50,7 +51,11 @@ def render(state: WizardState) -> None:
             st.error(str(exc))
             return
         except Exception as exc:  # noqa: BLE001 - surfaced directly to the user, not swallowed
-            st.error(f"Couldn't open one of these as an Excel workbook: {exc}")
+            show_error(
+                "Couldn't open one of these as an Excel workbook. It may not be a valid "
+                ".xlsx file, or the file could be corrupted.",
+                exc,
+            )
             return
 
     label = state.upload_names[0] if len(state.upload_names) == 1 else f"{len(state.upload_names)} files"
