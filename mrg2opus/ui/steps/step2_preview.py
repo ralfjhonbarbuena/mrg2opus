@@ -5,7 +5,7 @@ import streamlit as st
 
 from mrg2opus.parsers.registry import get_profile
 from mrg2opus.presets.models import MappingProfile
-from mrg2opus.ui.commodity_utils import distinct_commodity_groups
+from mrg2opus.ui.commodity_utils import assign_sequential_default_codes, distinct_commodity_groups
 from mrg2opus.ui.errors import show_error
 from mrg2opus.ui.parsing import run_parser
 from mrg2opus.ui.state import WizardState
@@ -61,6 +61,25 @@ def render(state: WizardState) -> None:
             # from this FIRST parse, before Step 3 applies any overrides -
             # see WizardState.default_commodity_groups.
             state.default_commodity_groups = distinct_commodity_groups(state.row_sets)
+
+            # User-directed (2026-08-27): every distinct group gets its own
+            # unique output code (G0001, G0002, ...) by default, instead of
+            # silently sharing whatever structural code a lane's parser
+            # happens to use internally for unrelated joins - see
+            # commodity_utils.assign_sequential_default_codes' docstring.
+            # Auto-seeding commodity_code_overrides (rather than changing
+            # any parser's own internal code) means Step 3's existing
+            # override editor, and every parser's resolve_commodity_code()
+            # call, pick this up for free - re-parsing once more so
+            # row_sets (this preview, and Export if untouched) reflects it
+            # immediately, not just Step 3's editor. Only seeded when the
+            # profile has no code overrides yet, so this never clobbers a
+            # loaded preset or a re-parse after the user already customized.
+            if not state.profile.commodity_code_overrides:
+                state.profile = state.profile.model_copy(
+                    update={"commodity_code_overrides": assign_sequential_default_codes(state.default_commodity_groups)}
+                )
+                state.row_sets = _run_parser(state, state.profile)
 
     row_sets = state.row_sets
 
