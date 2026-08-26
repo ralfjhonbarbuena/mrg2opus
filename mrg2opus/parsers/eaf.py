@@ -25,7 +25,14 @@ from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema.opus_rows import OpusRowSet, RatesRow, explode_rates_row
 
-SUBLANE_SHEET_RE = re.compile(r"^EAF\s+(\w+)$")
+# Real EAF files (see reference/1_MRGs) arrive as one standalone file per
+# sub-lane with a BARE sheet name ("TZDAR", "KEMBA") - the "EAF "-prefixed
+# form only appears in the older bundled sample, which combined both
+# sub-lanes into one workbook as a sample-data convenience. Match both;
+# restricted to the two known sub-lane names (not a bare \w+) to avoid
+# false-positive matches against unrelated single-word sheet names from
+# other lanes.
+SUBLANE_SHEET_RE = re.compile(r"^(?:EAF\s+)?(TZDAR|KEMBA)$", re.IGNORECASE)
 VIA_EXTRACT_RE = re.compile(r"\bvia\s+(.+)$", re.IGNORECASE)
 VALIDITY_RE = re.compile(r"(\d{1,2})\s+(\w+)\s+to\s+(\d{1,2})\s+(\w+)\s+(\d{4})", re.IGNORECASE)
 
@@ -39,8 +46,6 @@ DATA_MIN_ROW = 10
 DATA_MAX_ROW = 53
 MIN_COL, MAX_COL = 4, 6  # D..F (D2, D4, D5 - no reefer column on this lane)
 ORIGIN_TEXT_COL = 2  # B
-
-PREPAID_LINE = "Ocean Freight to be Prepaid, payable at -1 by -1."
 
 
 @dataclass
@@ -56,7 +61,6 @@ class EAFSubLaneData:
     validity_start: date | None
     validity_end: date | None
     included_charge_codes: list[str]
-    prepaid_at_origin: bool
     rate_cells: list[RawRateCell]
 
 
@@ -94,7 +98,6 @@ class EAFParser(BaseMRGParser):
     def _parse_sublane(self, ws: Worksheet) -> EAFSubLaneData:
         validity_start, validity_end = _parse_validity(ws)
         included_codes = parse_included_charge_codes(str(ws.cell(row=3, column=4).value or ""))
-        prepaid_at_origin = "PREPAID" in str(ws.cell(row=5, column=4).value or "").upper()
         dest_cell = ws.cell(row=DEST_VALUE_ROW, column=4)
         # A struck-through/blacked-out destination cell marks the whole
         # sub-lane sheet's destination as withdrawn - no origin rate on this
@@ -125,7 +128,6 @@ class EAFParser(BaseMRGParser):
             validity_start=validity_start,
             validity_end=validity_end,
             included_charge_codes=included_codes,
-            prepaid_at_origin=prepaid_at_origin,
             rate_cells=rate_cells,
         )
 
@@ -152,14 +154,12 @@ class EAFParser(BaseMRGParser):
         # CMDT NOTE is built first because the PORT-PORT sheet (but NOT the
         # grouped RATES sheet - confirmed asymmetry against ground truth)
         # copies its Contents text into every exploded row's commodity_note.
-        extra_lines = [PREPAID_LINE] if data.prepaid_at_origin else []
         cmdt_notes = build_cmdt_notes(
             data.validity_start,
             data.validity_end,
             data.included_charge_codes,
-            extra_content_lines=extra_lines,
             sequential_charge_seq=True,
-            trailing_oft_row=data.prepaid_at_origin,
+            excluded_codes=frozenset(config.excluded_charge_codes),
         )
         dr_rows: list[RatesRow] = []
         dg_rows: list[RatesRow] = []
@@ -275,7 +275,7 @@ register(
     LayoutProfile(
         lane_id=EAFParser.lane_id,
         parser_cls=EAFParser,
-        sheet_name_patterns=[r"^EAF\s+\w+$"],
+        sheet_name_patterns=[r"^(?:EAF\s+)?(TZDAR|KEMBA)$"],
         title_keywords=["EAF"],
         header_fingerprint=["D2", "D4", "D5"],
     )

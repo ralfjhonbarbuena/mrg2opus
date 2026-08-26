@@ -19,9 +19,13 @@ def _rates_row(**overrides) -> RatesRow:
 
 
 def _reference_workbook_with_rates_sheet(rows: list[list]) -> "openpyxl.Workbook":
+    # "RATES" matches _run_comparison's own real-filing-name convention
+    # (excel_io/writer.py's _sheet_names_for_suffix) - NOT
+    # cols.SHEET_NAME_RATES, which is the older bundled-sample fixtures'
+    # naming (see that constant's own docstring).
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = cols.SHEET_NAME_RATES
+    ws.title = "RATES"
     for offset, row in enumerate(rows):
         for col_idx, value in enumerate(row, start=1):
             ws.cell(row=3 + offset, column=col_idx, value=value)

@@ -7,6 +7,7 @@ not an exhaustive authority.
 from __future__ import annotations
 
 CHARGE_CODE_NAMES: dict[str, str] = {
+    "BAF": "BUNKER ADJUSTMENT FACTOR",
     "EFS": "EMERGENCY FUEL SURCHARGE",
     "MBS": "MONTHLY ONE BUNKER SURCHARGE",
     "OBS": "ONE BUNKER SURCHARGE",
@@ -21,7 +22,17 @@ CHARGE_CODE_NAMES: dict[str, str] = {
 # Codes confirmed (against ground truth) to become their own CMDT NOTE child
 # row when mentioned in a raw sheet's "Rate structure: Includes X/Y/Z" line.
 # Deliberately a whitelist, not "everything after Includes": EAF's raw text
-# lists BAF and BRS as included too, but neither gets a child row in the
-# ground truth - only extend this set when a new code is directly confirmed
+# lists BRS as included too, but it never gets a child row in the ground
+# truth - only extend this set when a new code is directly confirmed
 # against a real OPUS CMDT NOTE sheet, not by guessing from raw text alone.
-INDIVIDUAL_CHARGE_CODES: frozenset[str] = frozenset({"EFS", "MBS", "OBS", "HEA", "LSF", "PSS", "THL", "CSS", "SLF"})
+#
+# CORRECTION (2026-08-26): BAF was originally excluded here too, based on
+# the older bundled EAF.xlsx sample's ground truth. User-clarified reason:
+# their SOP tells human filing agents NOT to file BAF - a special case for
+# people, not a filing-format rule. This tool should reproduce whatever
+# the raw MRG's "Includes" text says, BAF included, rather than mimicking
+# that human-only SOP exclusion. Confirmed via reference/2_OPUS/7_EAF-KEMBA
+# and 8_EAF-KEMBA, both of which do include it.
+INDIVIDUAL_CHARGE_CODES: frozenset[str] = frozenset(
+    {"BAF", "EFS", "MBS", "OBS", "HEA", "LSF", "PSS", "THL", "CSS", "SLF"}
+)

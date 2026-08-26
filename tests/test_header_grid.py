@@ -1,28 +1,41 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import openpyxl
+import pytest
 from openpyxl.styles import Font, PatternFill
 
 from mrg2opus.parsers.common.header_grid import flatten_pod_header
 
+REFERENCE_DIR = Path(__file__).resolve().parents[1] / "reference"
+CSE_RAW_PATH = (
+    REFERENCE_DIR / "1_MRGs" / "1_CSE FAK, CSE FAK FOR VELAG AND VEPBL"
+    / "CSE Pricing Guideline (15-21  AUG 2026 ) FAK.xlsx"
+)
 
-def test_flatten_pod_header_against_saf_sample():
-    wb = openpyxl.load_workbook("Sample MRGs with OPUS FORMATS/SAF.xlsx", data_only=False)
-    ws = wb["SAF"]
 
-    columns = flatten_pod_header(ws, pod_label_row=5, container_label_row=6, min_col=4, max_col=11)
+@pytest.mark.skipif(not CSE_RAW_PATH.exists(), reason="reference/ ground-truth files not present in this checkout")
+def test_flatten_pod_header_against_real_cse_sample():
+    wb = openpyxl.load_workbook(CSE_RAW_PATH, data_only=False)
+    ws = wb["CSE"]
+
+    columns = flatten_pod_header(ws, pod_label_row=7, container_label_row=9, min_col=3, max_col=11)
 
     labels = [(c.pod_label, c.container_label) for c in columns]
     assert labels == [
-        ("Durban", "D2"), ("Durban", "D4"), ("Durban", "D5"), ("Durban", "RD5"),
-        ("Cape Town", "D2"), ("Cape Town", "D4"), ("Cape Town", "D5"), ("Cape Town", "RD5"),
+        ("Manzanillo, PA", "D2"), ("Manzanillo, PA", "D4"), ("Manzanillo, PA", "D5"),
+        ("Colon Free Zone\n (Door via Manzanillo, PA)", "D2"),
+        ("Colon Free Zone\n (Door via Manzanillo, PA)", "D4"),
+        ("Colon Free Zone\n (Door via Manzanillo, PA)", "D5"),
+        ("Caucedo", "D2"), ("Caucedo", "D4"), ("Caucedo", "D5"),
     ]
 
 
 def _build_two_pod_sheet() -> "openpyxl.worksheet.worksheet.Worksheet":
     """3 columns per POD (D2/D4/D5), 2 PODs - mirrors CSE/LAEC/LAWC's shape,
     minus merged cells (flatten_pod_header's merge-range lookup is already
-    covered by the SAF sample test above; this isolates the exclusion
+    covered by the real CSE sample test above; this isolates the exclusion
     check)."""
     wb = openpyxl.Workbook()
     ws = wb.active

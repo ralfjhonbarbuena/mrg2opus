@@ -201,22 +201,31 @@ PSA_CLASS3_ROW = 24
 PSA_NON_STORABLE_CLASS_ORDER = ["2B", "1D", "2"]
 PSA_STORABLE_CLASS_ORDER = ["1S", "2A", "3", "2F", "2S"]
 PSA_TS_PORT = "SGSIN"  # "for any shpt tranship via Singapore"
-# Not derivable from any cell in this file (see module docstring); the
-# validity END matches the main filing's validity end (data.validity_end,
-# used dynamically), but the START is a standing policy date, and the
-# Contents text has its own internal inconsistency in the ground truth
-# itself (says "March 22, 2026" while the structured date field says May
-# 22) - reproduced verbatim rather than "corrected" against a guess.
-PSA_VALIDITY_START = date(2026, 5, 22)
-PSA_CONTENTS = (
-    "Valid from March 22, 2026 until August 31, 2026.\n\n"
+# CORRECTION (2026-08-26): originally hardcoded as a fixed "standing
+# policy" validity window (start May 22 2026, contents text "March 22,
+# 2026 until August 31, 2026") verified only against one old bundled
+# sample. A real reference file (reference/2_OPUS/1_CSE FAK.../..., a
+# different filing week) shows the SPECIAL NOTE's validity - both start
+# and end, and the Contents text's own "Valid from X until Y" line -
+# simply mirrors the main filing's own validity window (data.validity_
+# start/data.validity_end), not a fixed policy date at all. The old
+# sample's specific week's dates were mistaken for a standing constant.
+PSA_CONTENTS_TEMPLATE = (
+    "Valid from {start} until {end}.\n\n"
     "For dangerous cargo under PSA Group: 1S, 2S, 2A, 2F, 3, the PSA DG SURCHARGE "
-    "(APPLICABLE FOR CARGOES VIA SIN)(PSA) is fixed at USD 0.00 per Container.\n"
+    "(APPLICABLE FOR CARGOES VIA SIN)(PSA) is fixed at USD 0.00 per Container.\n\n"
     "For dangerous cargo, under PSA Group: 1D, 2 and 2B the PSA DG SURCHARGE "
     "(APPLICABLE FOR CARGOES VIA SIN)(PSA) is fixed at USD 538.00 per 20 Foot Equivalent Unit.\n"
     "For dangerous cargo, under PSA Group: 1D, 2 and 2B the PSA DG SURCHARGE "
     "(APPLICABLE FOR CARGOES VIA SIN)(PSA) is fixed at USD 753.00 per 40 Foot Equivalent Unit."
 )
+
+
+def _psa_contents(validity_start: date, validity_end: date) -> str:
+    def _fmt(d: date) -> str:
+        return f"{d.strftime('%B')} {d.day}, {d.year}"
+
+    return PSA_CONTENTS_TEMPLATE.format(start=_fmt(validity_start), end=_fmt(validity_end))
 
 
 @dataclass
@@ -586,6 +595,7 @@ class CSEParser(BaseMRGParser):
             note_specs,
             sequential_charge_seq=True,
             sort_text_names=False,  # verified: CSE's text preserves input order, not alphabetical
+            excluded_codes=frozenset(config.excluded_charge_codes),
         )
 
         arbs = self._build_arbs(data)
@@ -597,7 +607,7 @@ class CSEParser(BaseMRGParser):
         )
 
     def _build_special_notes(self, data: CSERawData) -> list[SpecialNoteRow]:
-        if data.psa_rate_20 is None or data.psa_rate_40 is None or data.validity_end is None:
+        if data.psa_rate_20 is None or data.psa_rate_40 is None or data.validity_start is None or data.validity_end is None:
             return []
 
         rows: list[SpecialNoteRow] = []
@@ -608,11 +618,11 @@ class CSEParser(BaseMRGParser):
                     SpecialNoteRow(
                         header_seq=1 if charge_seq == 1 else None,
                         note_seq=3 if charge_seq == 1 else None,
-                        contents=PSA_CONTENTS if charge_seq == 1 else None,
+                        contents=_psa_contents(data.validity_start, data.validity_end) if charge_seq == 1 else None,
                         charge_seq=charge_seq,
                         code="PSA",
                         application="Fix Amount",
-                        application_effective=PSA_VALIDITY_START,
+                        application_effective=data.validity_start,
                         application_expires=data.validity_end,
                         cur="USD",
                         amount=amount,
@@ -629,7 +639,7 @@ class CSEParser(BaseMRGParser):
                     charge_seq=charge_seq,
                     code="PSA",
                     application="Fix Amount",
-                    application_effective=PSA_VALIDITY_START,
+                    application_effective=data.validity_start,
                     application_expires=data.validity_end,
                     cur="USD",
                     amount=Decimal(0),
