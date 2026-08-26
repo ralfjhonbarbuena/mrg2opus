@@ -121,6 +121,25 @@ default) keeps the existing behavior. EAF's TZDAR and KEMBA sub-lanes
 share one toggle, same as every other per-group override in this table -
 see `MappingProfile.skip_dg_generation`.
 
+**Excluding a charge code from filing.** Some charge codes get excluded
+from real filings for account-specific reasons that aren't in the raw
+MRG at all - e.g. BAF (oil surcharge, functionally the same as OBS) isn't
+applicable for some accounts' RFAs even though the MRG's own "Includes"
+text mentions it. Step 3's **Special instructions** section has a
+comma-separated "Exclude charge codes from filing" field - applies to the
+whole filing, every commodity group, dropping the listed code(s) from
+both the CMDT NOTE's "inclusive of" text and its own child row. Empty
+(the default) reproduces the MRG as-is. See `MappingProfile.excluded_charge_codes`.
+
+**Default commodity group codes are sequential.** Every distinct
+commodity group gets its own unique code (G0001, G0002, G0003, ...) out
+of the box, in the order groups are first encountered while parsing -
+even if a lane's parser internally shares one structural code across
+several groups (e.g. LAWC's main dry grid, Reefer, and LAWC NOR all use
+the same internal code). Step 3's "Parsed default code" column still
+shows that original internal code for reference; "Code (yours)" is what
+actually gets written, and is always yours to further override.
+
 **If output looks stale, re-parse.** Step 2 caches its parse for the whole
 session, and re-uploading the same filenames does not by itself force a
 re-run. Use Step 2's **↻ Re-parse from source** button (it clears the

@@ -68,7 +68,7 @@ streamlit, PyYAML, platformdirs, python-dateutil, pytest).
 | **LAEC** | ✅ Done, near-exact (documented gaps) | Same shape as CSE but doubled: every sheet splits into Non-ISC/ISC sections. "R5 NOR" now defaults to its own commodity description (see §3.6). | 4/4 pass |
 | **LAWC** | ✅ Done, exact match | 4 Dry-shaped grids (main/SEA/ISC/OOG) + Reefer + NOR sheets, each its own commodity group. OOG has 4 equipment-type column-pairs mapping to Prefix O/F twins or F-only. RATES PORT-PORT uses a completely different commodity code namespace than RATES for the same data. Reefer/NOR now default to their own commodity descriptions (see §3.6). | 4/4 pass |
 
-Full test suite: **91/91 passing** (`./.venv/Scripts/python.exe -m pytest tests/ -v`, ~4-4.5 min) - includes `test_excel_io_merge.py` (5 tests) and `test_ordering.py` (6 tests) added for §3.7's multi-file/ordering work, one CSE regression test added for §3.8's shifted-header-row fix, 4 more (2 in `test_header_grid.py`, 2 in `test_parsers_cse.py`) added for §3.9's withdrawn-location exclusion, the Compare mode's own suite from §3.11 (`test_audit_compare.py`, `test_compare_engine_regression.py`, `test_mrg_upload.py`, `test_compare_page.py`), and one regression test per lane added for §3.12's DG opt-out.
+Full test suite: **79/79 passing** (`./.venv/Scripts/python.exe -m pytest tests/ -v`, ~1.5-2 min) - see §3.15 for the 2026-08-26 rebuild onto `reference/` ground truth (SAF has no golden tests anymore; `test_compare_engine_regression.py`/`golden.py`/`conftest.py` were removed as redundant/dead), §3.16 for the `excluded_charge_codes` feature added the same day (`test_cmdt_notes.py` + 1 EAF end-to-end test), and §3.17 for sequential default commodity codes (`test_commodity_utils.py`).
 
 ## 3.5 Phase 2 — Streamlit wizard UI
 
@@ -714,6 +714,258 @@ gained an upfront `state.workbook is None or state.selected_lane_id is
 None` guard with a clear "go back and upload" message, matching the
 pattern Steps 3/4 already had for their own prerequisites.
 
+## 3.14 Real filing sheet names + ROUTE NOTE (RN) sheet support
+
+User-provided real MRG→OPUS ground-truth file pairs (`reference/1_MRGs` +
+`reference/2_OPUS`, delivered 2026-08-26, tracked in `reference/for
+hackathon TRACKER.xlsx`) revealed the app's own writer output sheet names
+(`OPUS RATES`, `OPUS ARBS`, `OPUS CMDT NOTE`, `OPUS SPECIAL NOTE`) never
+matched any real OPUS filing convention (`RATES`, `ORIGIN ARBS`, `CMDT
+NOTE`, `SPECIAL NOTE`) - an internal naming convention this project had been
+using since the start, confirmed via user clarification to need
+correcting before final export. The same investigation surfaced a
+previously-unmodeled third note-sheet type, ROUTE NOTE (`RN`), scoped to
+a specific route pair rather than a whole commodity sequence or the whole
+service - distinct from CMDT NOTE and SPECIAL NOTE, not merely the
+existing `RatesRow.route_note` column. See the `project-opus-note-sheet-
+taxonomy` memory for the full naming-drift story (SRCHG/SUR are CMDT NOTE
+mislabeled; FREETIME/DEMDET are the same schema under a lane-specific
+name).
+
+- **Real filing sheet names** (`excel_io/writer.py::_sheet_names_for_
+  suffix`): `rates`→`RATES`, `rates_port_port`→`RATES PORT-PORT`,
+  `arbs`→`ORIGIN ARBS`, `cmdt_notes`→`CMDT NOTE`, `special_notes`→`SPECIAL
+  NOTE`. Deliberately does NOT touch `schema/opus_columns.py`'s
+  `SHEET_NAME_*` constants - those match the older, hand-prepared bundled
+  `Sample MRGs with OPUS FORMATS/*.xlsx` fixtures every `test_parsers_
+  *.py` golden test reads from directly by file, and changing them would
+  break every lane's regression suite for no reason (those static files'
+  own sheet names don't change just because a Python constant does). The
+  app's Step 2/4 UI labels (`SHEET_LABELS` in `step2_preview.py`) are
+  unaffected too - purely in-app display text, not the exported file.
+  `compare_page.py`'s Compare mode was updated to look for these same
+  real names in an uploaded reference file.
+  **Correction (same day):** initially built as `O.ARBS` (verified
+  against LAEC's real output) before CSE's own real reference pair
+  arrived and showed `ORIGIN ARBS` (spelled out) instead - the same
+  per-preparer naming drift as SRCHG/SUR, this time on ARBS. User's call:
+  use the spelled-out `ORIGIN ARBS` everywhere, not lane-specific.
+- **New ROUTE NOTE (`RouteNoteRow`) schema + writer support**
+  (`schema/opus_rows.py`, `schema/opus_columns.py::RN_HEADER`/
+  `RN_ROW_FIELDS`, `excel_io/writer.py::_write_route_note_sheet`): same
+  shape as `CmdtNoteRow` plus `route_seq` and 10 trailing columns
+  (Receiving Term through Premium) confirmed on the real RN sheet.
+  `header_seq`/`route_seq`/`note_seq` are placeholder running numbers
+  assigned at parse time (confirmed acceptable - OPUS renumbers these on
+  import - same treatment CMDT NOTE's `header_seq`/`note_seq` already
+  got elsewhere in this codebase), not reproductions of any real
+  OPUS-assigned number. Unlike CMDT NOTE, real RN rows are header-only
+  (no child charge-code rows).
+- **LAWC wired up fully** (`parsers/lawc.py::_derive_route_notes`): every
+  `RatesRow` with a non-null `route_note` (HNSLO's MAR/MX2, OOG's
+  KCI/OH/OWOH/OW cases) gets a matching RN entry.
+  - **Real bug fixed along the way**: `_oog_route_note` was returning the
+    bare text `"IG"` for plain in-gauge equipment - ground truth (2
+    independent newer reference files, FAK and Tier 1) shows this should
+    be blank, and the KCI-flagged case should read bare `"...KCI"` with
+    no `"(IG)"` suffix. The bundled `LAWC.xlsx` sample actually has the
+    old `"IG"`/`"...KCI (IG)"` text baked into its own ground truth - a
+    confirmed-stale artifact, not a second valid convention - so
+    `route_note` is now excluded from that bundled sample's own
+    RATES-matching tests (see their inline comments) and verified instead
+    against the newer files directly (`test_lawc_route_notes_
+    reference.py`).
+  - **New real business rule, user-confirmed**: "REEFER DRY AS DANGEROUS"
+    - Non-Operating Reefer (`LAWC NOR` raw sheet) cargo that's dangerous
+      gets filed as `D`/`DG` (folded into G0004/S.E.A_JPN_SA_AU_NZ's
+      regular dry-and-dangerous bucket) instead of `R`/`DG`, with this
+      route note explaining why. This is why NOR's own commodity code
+      shows as G0004 in the real reference files rather than the G0001
+      default - not a parser bug, since commodity codes are user-
+      customizable per lane already. `lawc.py`'s reefer/nor loop now
+      builds this DG-duplicate for NOR specifically (never Reefer -
+      `REEFER_CONFIG`'s cgo_type `"RF"` never matched the DG-duplication
+      rule anyway), combining with any pre-existing route note (e.g. the
+      `AX3` vessel-lane note) via `" | "`.
+  - **Known, deliberately out-of-scope gap found along the way**: the new
+    reference files' ISC/SEA raw sheets have real HNSLO destination rows
+    this parser fails to detect in some cases (MAR route-note count short
+    190 vs 196; MX2 entirely 0 vs 88 for the FAK reference file) -
+    unrelated to route notes, confirmed pre-existing, and explicitly not
+    chased down as part of this task (matches the already-deferred "LAWC
+    Tier 1/FAK real-file fidelity" item). `test_lawc_route_notes_
+    reference.py` checks route-note category *counts* rather than a full
+    RN-sheet equality specifically to sidestep this gap without hiding
+    regressions in what this task actually built.
+
+New tests: `tests/test_writer.py` (sheet renaming + RN write/omit
+behavior), `tests/test_lawc_route_notes_reference.py` (route_note/RN
+correctness against the real `reference/2_OPUS/15_LAWC FAK` file pair,
+skipped if that directory isn't present in the checkout).
+
+## 3.15 Test suite rebuilt onto reference/ ground truth; old bundled samples deleted
+
+2026-08-26 (later the same day as §3.14): the user deliberately deleted
+`Sample MRGs with OPUS FORMATS/*.xlsx` and `MRGs RAW SAMPLES/*.xlsx` for
+good (see feedback-reference-folder-convention memory) - every
+`test_parsers_*.py` golden test read from these directly, so the whole
+suite needed rebuilding onto `reference/1_MRGs`/`2_OPUS` pairs instead.
+
+- **CSE, EAF (KEMBA only), LAEC, LAWC**: migrated to real `reference/`
+  pairs. **SAF**: `test_parsers_saf.py` deleted outright - no `reference/`
+  data exists for SAF at all (not even in the tracker).
+- **`ARBS` naming corrected mid-migration**: CSE's real output uses
+  `ORIGIN ARBS` (spelled out), not the `O.ARBS` §3.14 originally shipped
+  (verified against LAEC only) - user's call: use the spelled-out name
+  everywhere, not lane-specific. Fixed in `writer.py`/`compare_page.py`.
+- **Real bugs found and fixed along the way** (each only surfaced because
+  this was the first time these real files were compared field-by-field):
+  - `eaf.py`'s sub-lane sheet detection (`SUBLANE_SHEET_RE`) required a
+    literal `"EAF "` prefix (`"EAF TZDAR"`) - real EAF files use bare
+    `"TZDAR"`/`"KEMBA"` sheet names and were completely unrecognized
+    (zero rows parsed, not just a field mismatch). This would have hit
+    real users uploading real EAF files through the UI today.
+  - `schema/charge_codes.py::INDIVIDUAL_CHARGE_CODES` excluded `"BAF"`
+    (Bunker Adjustment Factor) based on the old bundled EAF sample. User-
+    clarified: their SOP tells human filing agents not to file BAF - a
+    special case for people, not a filing-format rule - so this tool
+    should reproduce the raw MRG's own "Includes" text as-is, BAF
+    included. Confirmed against real KEMBA ground truth (2 independent
+    weeks). Added, with `CHARGE_CODE_NAMES["BAF"]`.
+  - `eaf.py`'s `PREPAID_LINE`/`trailing_oft_row` feature (added an "Ocean
+    Freight to be Prepaid, payable at -1 by -1." line + an "OFT" child
+    row) never matched either real KEMBA file - the `-1 by -1` text was a
+    dead giveaway this was never fully implemented. Removed entirely,
+    along with the now-dead `trailing_oft_row`/`extra_content_lines`
+    parameters on the shared `parsers/common/cmdt_notes.py::
+    build_cmdt_notes()`.
+  - `cse.py`'s SPECIAL NOTE (PSA surcharge) validity window and its
+    "Valid from X until Y" Contents text were hardcoded to one specific
+    week's dates (`PSA_VALIDITY_START = date(2026, 5, 22)`, "March 22,
+    2026 until August 31, 2026") as if a "standing policy date" - a real
+    reference file (different week) shows it should just mirror the main
+    filing's own `data.validity_start`/`data.validity_end` dynamically.
+    Fixed via new `_psa_contents()` helper.
+- **Follow-ups flagged, not fixed** (each would need its own investigation
+  - do not assume any of these are simple):
+  - CSE's 2-file upload (`FAK.xlsx` + `...for VELAG and VEPBL.xlsx`)
+    crashes with `DuplicateSheetError` today - both share 4 sheet names
+    and `excel_io/merge.py` has no rule to rename the second file's `CSE`
+    sheet to `CSE VE` before combining, despite the module's own docstring
+    describing exactly this scenario. Spawned as a separate task
+    (`task_243523c4`). `test_parsers_cse.py` only tests the main file
+    alone until this is fixed (552 VELAG/VEPBL rows untested).
+  - LAEC: 210 real rows (all `DG`/`D`, all Argentina destinations e.g.
+    `ARLPG`/`ARZAE`/`ARUSH`) are completely missing from what the parser
+    generates - likely a DG-duplicate rule tied to the "ECSA Add-On" raw
+    sheet, not implemented. Excluded from `test_parsers_laec.py` via
+    `_is_known_missing_gap`.
+  - LAWC: the SEA grid's Central/South America destinations (304 rows -
+    152 DR + their DG-duplicates) are missing for this specific FAK
+    week/file - broader than the HNSLO-only gap §3.14 first found via
+    route-note counts. Excluded via `_KNOWN_MISSING_DESTINATIONS` in
+    `test_parsers_lawc.py`. Also: NOR needs a THIRD DG variant for PEPAI
+    specifically (plain `R`/`DG`, no route note) that isn't implemented
+    either (12 rows, separately excluded).
+  - **Fixed (same day, follow-up)**: LAWC's own hardcoded
+    `MAIN_CHARGE_CODES`/`OOG_CHARGE_CODES`/`ISC_CHARGE_CODES`/
+    `SEA_CHARGE_CODES` lists (unrelated to the shared `charge_codes.py`
+    fixed above - LAWC doesn't go through `INDIVIDUAL_CHARGE_CODES` at
+    all) were also missing `"BAF"`. Confirmed present in all 5 of
+    reference/2_OPUS/15_LAWC FAK's real SRCHG blocks; added to all 4
+    lists (placed first, matching the 2 groups directly observed with
+    BAF as the first child row - see project-tool-mirrors-mrg-not-human-
+    sop memory for why this isn't a stale-sample issue).
+    `test_lawc_cmdt_note_merges_when_descriptions_match` stays removed
+    regardless (its 25-vs-35 count mismatch has other, unresolved causes
+    beyond just BAF).
+  - CSE and LAEC's CMDT-NOTE-merge-by-description behavior (previously
+    verified against the old bundled samples) doesn't reproduce either
+    real reference file's actual block count/content - both merge tests
+    were removed rather than reverse-engineered under time pressure.
+- **Sheets that don't exist in real output**: neither CSE's, LAEC's, nor
+  LAWC's real reference files have a `RATES PORT-PORT` sheet at all (the
+  old bundled samples did) - those ground-truth tests were removed, not
+  adapted, since there's nothing to compare against.
+- **Cross-cutting fixture cleanup**: `test_mrg_upload.py`,
+  `test_header_grid.py`, `test_registry.py` used `SAF.xlsx` purely as
+  "some real xlsx" for upload/header-grid/classification mechanics
+  unrelated to SAF specifically - repointed at LAEC/CSE `reference/`
+  files instead (with matching assertion updates, e.g. lane_id/sheet
+  names). `tests/golden.py` (dead once every lane stopped reading from
+  it), `tests/conftest.py` (only fixture was the now-deleted sample
+  directories), and `tests/test_compare_engine_regression.py` (redundant
+  with the migrated per-lane tests, which now exercise the same
+  production `audit.compare` functions directly) were deleted outright.
+
+## 3.16 Filing-wide charge-code exclusion ("Special instructions")
+
+Follow-up to §3.15's BAF fix: the user clarified BAF is excluded from
+some real filings not because ground truth was stale, but because their
+own SOP tells human filing agents not to file it for certain accounts
+(BAF is an oil surcharge, functionally the same as OBS; their Hong Kong
+account's RFAs don't apply it) - a human-only special case the TOOL
+should still be able to reproduce the raw MRG's own text for by default,
+with an opt-in override for exactly this kind of account-specific
+exclusion. See project-tool-mirrors-mrg-not-human-sop memory.
+
+- **`MappingProfile.excluded_charge_codes: list[str]`** (new field,
+  `presets/models.py`) - filing-wide (not per-commodity-group, user's
+  explicit choice), general-purpose (any charge code, not BAF-specific).
+- **`parsers/common/cmdt_notes.py::build_cmdt_notes()`** gained an
+  `excluded_codes: frozenset[str]` parameter, applied before anything
+  else - an excluded code never appears in the "inclusive of" text or
+  gets its own child row. `build_notes_by_description()` already forwarded
+  arbitrary kwargs, so no change needed there.
+- Wired into all 5 lanes' `to_opus_rows()` (`cse.py`, `eaf.py`, `laec.py`,
+  `lawc.py`, `saf.py`) - every `build_cmdt_notes`/`build_notes_by_description`
+  call site now passes `excluded_codes=frozenset(config.excluded_charge_codes)`.
+- New "Special instructions" section in Step 3 (`ui/steps/step3_customize.py`):
+  one comma-separated text input, filing-wide, feeding the new profile field.
+- Tests: `tests/test_cmdt_notes.py` (unit-level: exclusion removes both
+  the child row and the text mention; excluding every code yields no
+  CMDT NOTE at all; default excludes nothing) and a new end-to-end test
+  in `test_parsers_eaf.py` confirming the profile field reaches a real
+  lane's output.
+- Verified live in the browser (Step 3 → Customize, real LAEC file):
+  the field renders, accepts input, and Apply & Continue flows through
+  to Export with no errors.
+
+## 3.17 Sequential default commodity group codes (G0001, G0002, ...)
+
+User-directed (2026-08-27): every distinct commodity group now gets its
+own unique output code by default, instead of silently sharing whatever
+structural code a lane's parser happens to use internally for unrelated
+joins (e.g. LAWC's main dry grid/Reefer/LAWC NOR all default to the SAME
+internal `"G0001"` - see `PP_COMMODITY`/`HNSLO_ROUTE_NOTE_BY_COMMODITY`
+in `lawc.py`, which still key off that shared internal code and were
+NOT touched). Numbered G0001, G0002, G0003, ... in the order groups are
+first encountered while parsing.
+
+- **`ui/commodity_utils.py`**: `distinct_commodity_groups()` now returns
+  groups in first-encounter order (was `sorted()` by code+description -
+  a behavior change to Step 3's default row order too, before the user
+  sets their own "Order" values). New `assign_sequential_default_codes()`
+  builds the `{description: "G000N"}` mapping.
+- **`ui/steps/step2_preview.py`**: right after the first (override-free)
+  parse and snapshotting `default_commodity_groups` (unchanged, still
+  override-free - the sequential mapping is computed FROM it, not
+  before), auto-seeds `state.profile.commodity_code_overrides` with the
+  sequential mapping - only when the profile has no code overrides yet
+  (so this never clobbers a loaded preset), then **re-parses once more**
+  so `row_sets` (this preview, and Export if the user changes nothing
+  further) reflects the new codes immediately, not just Step 3's editor.
+- Internal structural codes are completely untouched - every parser's
+  own internal joins keep working exactly as before; only what
+  `resolve_commodity_code()` resolves to BY DEFAULT changed, via the
+  existing override mechanism (no parser file was modified).
+- Verified live in the browser against LAWC's real reference file:
+  Step 3's "Parsed default code" column (disabled) still shows the
+  original structural codes (G0003 ISC, G0004 SEA, G0001×3 for Main/
+  Reefer/NOR, G0002 OOG); "Code (yours)" now shows unique G0001-G0006.
+- Tests: new `tests/test_commodity_utils.py` (order preservation +
+  unique-code assignment).
+
 ## 5. Files touched this session (everything above is new)
 
 Nothing pre-existed before this session — the whole `mrg2opus/` package,
@@ -770,6 +1022,11 @@ test exclusion — search each lane's test file for the exact fields):
   desynced from its `commodity_group_code`, and PORT-PORT's column holds a
   bare integer instead of text at all. Neither is a parser bug; see
   `tests/test_parsers_lawc.py`'s comments for the full reasoning.
+  **New (§3.14):** against the newer `reference/2_OPUS/15_LAWC FAK` real
+  file, ISC/SEA's HNSLO destination rows aren't fully detected (route-note
+  count short: MAR 190 vs 196, MX2 entirely 0 vs 88) — real, confirmed,
+  unrelated to route notes, deliberately not chased down this session;
+  see `tests/test_lawc_route_notes_reference.py`'s docstring.
 - Project-wide: Freetime (POD free-days + notes) is out of scope — no
   OPUS sheet in any of the 5 samples demonstrates a target format for it.
 
@@ -820,7 +1077,7 @@ cd "C:\Users\romsae-desktop\claude\PROCESS INNOVATION HACKATHON"
 ./.venv/Scripts/python.exe -m pytest tests/ -v
 ```
 
-Should show 91 passed. If not, something regressed since this note was
+Should show 79 passed. If not, something regressed since this note was
 written — bisect before building on top of it.
 
 To check the UI itself is still working end-to-end, run
