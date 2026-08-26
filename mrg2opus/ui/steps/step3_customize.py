@@ -115,6 +115,17 @@ def render(state: WizardState) -> None:
         edited = []
         st.caption("No commodity groups found in the parsed output.")
 
+    st.markdown("#### Special instructions")
+    excluded_charge_codes_input = st.text_input(
+        "Exclude charge codes from filing (comma-separated)",
+        value=", ".join(state.profile.excluded_charge_codes),
+        help=(
+            "Applies to the whole filing, every commodity group. Use this for account-specific rules the raw "
+            "MRG text doesn't reflect - e.g. a Hong Kong account excluding \"BAF\" because it duplicates OBS "
+            "and isn't applicable for their RFAs, even though the MRG's own \"Includes\" line mentions it."
+        ),
+    )
+
     st.markdown("#### Skip output sheets")
     sheet_names = _output_sheet_names(state.row_sets)
     skip_choices: dict[str, bool] = {}
@@ -165,6 +176,10 @@ def render(state: WizardState) -> None:
                 for r in sorted(edited, key=lambda r: r.get("order", 0))
             ]
 
+            excluded_charge_codes = [
+                c.strip().upper() for c in excluded_charge_codes_input.split(",") if c.strip()
+            ]
+
             state.profile = state.profile.model_copy(
                 update={
                     "commodity_code_overrides": code_overrides,
@@ -173,6 +188,7 @@ def render(state: WizardState) -> None:
                     "commodity_group_order": commodity_group_order,
                     "skip_output_sheets": skip_output_sheets,
                     "skip_dg_generation": skip_dg_generation,
+                    "excluded_charge_codes": excluded_charge_codes,
                 }
             )
 

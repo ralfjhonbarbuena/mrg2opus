@@ -30,21 +30,14 @@ def build_cmdt_notes(
     validity_start: date | None,
     validity_end: date | None,
     included_codes: list[str],
-    extra_content_lines: list[str] = (),
     sequential_charge_seq: bool = False,
-    trailing_oft_row: bool = False,
     sort_text_names: bool = True,
     charge_code_names_override: dict[str, str] | None = None,
+    excluded_codes: frozenset[str] = frozenset(),
 ) -> list[CmdtNoteRow]:
-    """extra_content_lines are inserted between the validity line and the
-    'inclusive of' line (e.g. EAF's prepaid-freight boilerplate).
-    sequential_charge_seq: SAF's ground truth leaves child rows' Charge Seq
+    """sequential_charge_seq: SAF's ground truth leaves child rows' Charge Seq
     blank (only the parent gets 1); EAF's numbers every row 1, 2, 3, ...
     Both are real, lane-specific ground-truth behaviors, not a guess.
-    trailing_oft_row: EAF's ground truth appends one more child row after
-    the charge-code children when the raw sheet has a "prepaid at origin"
-    disclaimer - code "OFT" ("Ocean Freight"?), Application "S" like the
-    parent (not "I" like the other children).
     sort_text_names: whether the "inclusive of X and Y" text lists codes
     alphabetically (SAF/EAF/LAEC) or in the same order as included_codes
     (CSE) - the two conventions genuinely contradict each other across
@@ -53,7 +46,14 @@ def build_cmdt_notes(
     e.g. LAEC's ground truth says "HEAVY SURCHARGE(HEA)" where EAF's says
     "HEAVY WEIGHT SURCHARGE(HEA)" for the same code; the shared
     CHARGE_CODE_NAMES can't hold two different names for one code, so a
-    lane with its own confirmed wording passes it here instead."""
+    lane with its own confirmed wording passes it here instead.
+    excluded_codes: user-directed, filing-wide charge codes to drop
+    entirely (see MappingProfile.excluded_charge_codes) - e.g. a Hong Kong
+    account excluding BAF because it duplicates OBS and isn't applicable
+    for their RFAs. Applied before anything else so an excluded code never
+    appears in the "inclusive of" text or gets its own child row."""
+    if excluded_codes:
+        included_codes = [c for c in included_codes if c not in excluded_codes]
     if not included_codes or validity_start is None or validity_end is None:
         return []
 
@@ -69,7 +69,6 @@ def build_cmdt_notes(
     names_line = " and the ".join(f"{names.get(code, code)}({code})" for code in unique_codes)
     lines = [
         f"Rates are valid from {validity_start:%Y%m%d} to {validity_end:%Y%m%d}",
-        *extra_content_lines,
         f"Rates are inclusive of the {names_line}",
         "Rates are subject to all other surcharges, including those, if any, specified in "
         "the contract and those published in the Governing Tariff(s) at the time of shipment.",
@@ -94,15 +93,4 @@ def build_cmdt_notes(
         )
         for i, code in enumerate(included_codes)
     ]
-    if trailing_oft_row:
-        children.append(
-            CmdtNoteRow(
-                charge_seq=(len(included_codes) + 2) if sequential_charge_seq else None,
-                code="OFT",
-                application_effective=validity_start,
-                application_expires=validity_end,
-                application="S",
-                pay_term="P",
-            )
-        )
     return [parent, *children]

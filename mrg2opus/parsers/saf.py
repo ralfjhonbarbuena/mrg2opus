@@ -259,7 +259,12 @@ class SAFParser(BaseMRGParser):
             *group_by_destination(reefer_pp),
         ]
 
-        cmdt_notes = build_cmdt_notes(data.validity_start, data.validity_end, data.included_charge_codes)
+        cmdt_notes = build_cmdt_notes(
+            data.validity_start,
+            data.validity_end,
+            data.included_charge_codes,
+            excluded_codes=frozenset(config.excluded_charge_codes),
+        )
 
         return OpusRowSet(rates=rates, rates_port_port=rates_port_port, cmdt_notes=cmdt_notes)
 

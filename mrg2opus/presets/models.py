@@ -56,3 +56,11 @@ class MappingProfile(BaseModel):
     # parser's own comment at its `cgo_type == "DR"` check). Absent/False
     # keeps that default behavior; True suppresses it for that one group.
     skip_dg_generation: dict[str, bool] = Field(default_factory=dict)
+    # Charge codes to drop from every CMDT NOTE/SPECIAL NOTE-equivalent
+    # block across the whole filing (not per-group - see
+    # project-tool-mirrors-mrg-not-human-sop memory) - e.g. a Hong Kong
+    # account excluding "BAF" because it duplicates OBS and isn't
+    # applicable for their RFAs, even though the raw MRG's own "Includes"
+    # text mentions it. Applied uniformly to every lane's charge-code
+    # list (see parsers/common/cmdt_notes.py::build_cmdt_notes).
+    excluded_charge_codes: list[str] = Field(default_factory=list)

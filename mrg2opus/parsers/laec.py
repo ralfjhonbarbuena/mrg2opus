@@ -484,7 +484,10 @@ class LAECParser(BaseMRGParser):
         arbs = build_arbs(data.yangtze_rows, data.yangtze_eff_date, data.yangtze_exp_date)
 
         cmdt_notes, note_text_by_description = build_notes_by_description(
-            note_specs, sequential_charge_seq=True, charge_code_names_override=CHARGE_CODE_NAMES_OVERRIDE
+            note_specs,
+            sequential_charge_seq=True,
+            charge_code_names_override=CHARGE_CODE_NAMES_OVERRIDE,
+            excluded_codes=frozenset(config.excluded_charge_codes),
         )
         for row in rates:
             row.commodity_note = note_text_by_description.get(row.commodity_group_description)
