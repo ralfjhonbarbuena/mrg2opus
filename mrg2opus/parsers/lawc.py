@@ -56,7 +56,7 @@ from mrg2opus.parsers.common.header_grid import flatten_pod_header
 from mrg2opus.parsers.common.ordering import group_by_destination
 from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.presets.models import MappingProfile
-from mrg2opus.schema.opus_rows import OpusRowSet, RatesPortPortRow, RatesRow
+from mrg2opus.schema.opus_rows import OpusRowSet, RatesPortPortRow, RatesRow, RouteNoteRow
 
 RAW_SHEET_MAIN = "China_TWN_SIN_HKG_KR Dry"
 RAW_SHEET_SEA = "S.E.A_JPN_SA_AU_NZ Dry "
@@ -98,10 +98,22 @@ NOR_DEFAULT_DESCRIPTION = RAW_SHEET_NOR.strip()
 # G0004's actual list includes CSS/THL/DOC/CDD that no "incl." line on
 # that sheet mentions). The boilerplate TEXT is confirmed alphabetized
 # (default sort_text_names=True), independent of this child order.
-MAIN_CHARGE_CODES = ["PSS", "OBS", "MBS", "EFS"]
-OOG_CHARGE_CODES = ["PSS", "OBS", "MBS", "EFS", "HEA"]
-ISC_CHARGE_CODES = ["EFS", "MBS", "OBS", "PSS"]
-SEA_CHARGE_CODES = ["OBS", "CSS", "THL", "DOC", "CDD", "MBS", "EFS", "PSS"]
+#
+# BAF added to every group (2026-08-26): confirmed present in all 5 of
+# reference/2_OPUS/15_LAWC FAK's real SRCHG blocks (the real CMDT NOTE
+# equivalent for this lane - see project-opus-note-sheet-taxonomy
+# memory). This isn't a lane-specific quirk - see
+# project-tool-mirrors-mrg-not-human-sop memory: the user's filing SOP
+# tells human agents to skip BAF, but this tool should reproduce it as
+# the MRG states regardless. Placed first in each list to match the two
+# groups (MAIN-shaped and OOG) directly observed with BAF as the first
+# child row; SEA's real block showed BAF second (after PSS) instead -
+# child ORDER is cosmetic (display sequence only, not a correctness
+# issue), not chased to an exact per-group match here.
+MAIN_CHARGE_CODES = ["BAF", "PSS", "OBS", "MBS", "EFS"]
+OOG_CHARGE_CODES = ["BAF", "PSS", "OBS", "MBS", "EFS", "HEA"]
+ISC_CHARGE_CODES = ["BAF", "EFS", "MBS", "OBS", "PSS"]
+SEA_CHARGE_CODES = ["BAF", "OBS", "CSS", "THL", "DOC", "CDD", "MBS", "EFS", "PSS"]
 
 # LAWC's ground truth says "HEAVY SURCHARGE(HEA)" (same as LAEC, not EAF's
 # "HEAVY WEIGHT SURCHARGE"); DOC/CDD are new codes not seen in any other
@@ -572,14 +584,18 @@ class LAWCParser(BaseMRGParser):
         # since each has its own default description to key by.
         main_code = COMMODITY_MAIN[0]
         main_validity_start, main_validity_end = data.validity.get(main_code, (None, None))
+        sea_output_code = resolve_commodity_code(COMMODITY_SEA[1], COMMODITY_SEA[0], config)
+        sea_description = resolve_commodity_description(COMMODITY_SEA[1], config)
         for rows, (prefix, cgo_type), default_description in (
             (data.reefer_rows, REEFER_CONFIG, REEFER_DEFAULT_DESCRIPTION),
             (data.nor_rows, NOR_CONFIG, NOR_DEFAULT_DESCRIPTION),
         ):
+            is_nor = default_description == NOR_DEFAULT_DESCRIPTION
             description = resolve_commodity_description(default_description, config)
             variant_cmdt_seq = config.commodity_sequence_overrides.get(default_description)
             variant_output_code = resolve_commodity_code(default_description, main_code, config)
             variant_rows, variant_pp = [], []
+            nor_dg_rows, nor_dg_pp = [], []
             for sr in rows:
                 origin_codes = self._resolve_codes(sr.origin_code_raw)
                 origin_names = [self._lookup_description(c) for c in origin_codes]
@@ -624,8 +640,27 @@ class LAWCParser(BaseMRGParser):
                         _explode_lawc(row, origin_name_map, dest_name_map), nor_reefer_code, nor_reefer_description
                     )
                 )
+                if is_nor and not config.skip_dg_generation.get(default_description, False):
+                    dg_row = row.model_copy(
+                        update={
+                            "prefix": "D",
+                            "cgo_type": "DG",
+                            "commodity_group_code": sea_output_code,
+                            "commodity_group_description": sea_description,
+                            "route_note": _sea_dg_route_note(row.route_note),
+                        }
+                    )
+                    nor_dg_rows.append(dg_row)
+                    sea_pp_code, sea_pp_description = PP_COMMODITY[COMMODITY_SEA[0]]
+                    nor_dg_pp.extend(
+                        _remap_pp_commodity(
+                            _explode_lawc(dg_row, origin_name_map, dest_name_map), sea_pp_code, sea_pp_description
+                        )
+                    )
             rates.extend(group_by_destination(variant_rows))
+            rates.extend(group_by_destination(nor_dg_rows))
             rates_port_port.extend(group_by_destination(variant_pp))
+            rates_port_port.extend(group_by_destination(nor_dg_pp))
             if variant_rows:
                 note_specs.append(
                     CommodityNoteSpec(description, main_validity_start, main_validity_end, MAIN_CHARGE_CODES)
@@ -670,19 +705,18 @@ class LAWCParser(BaseMRGParser):
                 route_note=_oog_route_note(gr.equipment, gr.kci),
             )
             oog_pp_code, oog_pp_description = PP_COMMODITY[oog_code]
-            pp_route_note = _oog_pp_route_note(gr.equipment, gr.kci)
             f_row = base.model_copy(update={"prefix": "F"})
             oog_rows_out.append(f_row)
             oog_pp.extend(
                 _remap_pp_commodity(
-                    _explode_lawc(f_row, origin_name_map, dest_name_map, pp_route_note), oog_pp_code, oog_pp_description
+                    _explode_lawc(f_row, origin_name_map, dest_name_map), oog_pp_code, oog_pp_description
                 )
             )
             if gr.equipment in ("ig", "oh"):
                 oog_rows_out.append(base)
                 oog_pp.extend(
                     _remap_pp_commodity(
-                        _explode_lawc(base, origin_name_map, dest_name_map, pp_route_note), oog_pp_code, oog_pp_description
+                        _explode_lawc(base, origin_name_map, dest_name_map), oog_pp_code, oog_pp_description
                     )
                 )
 
@@ -694,12 +728,19 @@ class LAWCParser(BaseMRGParser):
             )
 
         cmdt_notes, note_text_by_description = build_notes_by_description(
-            note_specs, sequential_charge_seq=True, charge_code_names_override=CHARGE_CODE_NAMES_OVERRIDE
+            note_specs,
+            sequential_charge_seq=True,
+            charge_code_names_override=CHARGE_CODE_NAMES_OVERRIDE,
+            excluded_codes=frozenset(config.excluded_charge_codes),
         )
         for row in rates:
             row.commodity_note = note_text_by_description.get(row.commodity_group_description)
 
-        return OpusRowSet(rates=rates, rates_port_port=rates_port_port, cmdt_notes=cmdt_notes)
+        route_notes = _derive_route_notes(rates, main_validity_start, main_validity_end)
+
+        return OpusRowSet(
+            rates=rates, rates_port_port=rates_port_port, cmdt_notes=cmdt_notes, route_notes=route_notes
+        )
 
     def _build_rates_row(
         self,
@@ -746,6 +787,46 @@ class LAWCParser(BaseMRGParser):
         return row, origin_name_map
 
 
+def _derive_route_notes(
+    rates: list[RatesRow], validity_start: date | None, validity_end: date | None
+) -> list[RouteNoteRow]:
+    """Every RatesRow with a non-null route_note needs a matching entry on
+    the real RN sheet (see project-opus-note-sheet-taxonomy memory) - real
+    RN rows are header-only (charge_seq/code always 1/"APP", no child
+    charge-code rows, unlike CMDT NOTE). header_seq/route_seq/note_seq are
+    placeholder running numbers, not reproductions of any real OPUS-assigned
+    number - confirmed acceptable since OPUS renumbers these on import,
+    same treatment already given to CMDT NOTE's header_seq/note_seq
+    elsewhere in this codebase. header_seq groups by distinct route_note
+    text (verified: every real RN row sharing one route_note text shares
+    one header_seq); route_seq is a running counter across all qualifying
+    rows, also stamped back onto the RatesRow it came from so the two
+    sheets stay linkable."""
+    route_notes: list[RouteNoteRow] = []
+    header_seq_by_text: dict[str, int] = {}
+    next_route_seq = 1
+    for row in rates:
+        if not row.route_note:
+            continue
+        header_seq = header_seq_by_text.setdefault(row.route_note, len(header_seq_by_text) + 1)
+        row.route_seq = next_route_seq
+        route_notes.append(
+            RouteNoteRow(
+                header_seq=header_seq,
+                route_seq=next_route_seq,
+                note_seq=1,
+                contents=row.route_note,
+                charge_seq=1,
+                code="APP",
+                application="S",
+                application_effective=validity_start,
+                application_expires=validity_end,
+            )
+        )
+        next_route_seq += 1
+    return route_notes
+
+
 def _charge_codes_for(commodity_code: str) -> list[str]:
     return {
         COMMODITY_MAIN[0]: MAIN_CHARGE_CODES,
@@ -769,22 +850,37 @@ def _find_transmode(via_text: str | None) -> str | None:
     return None
 
 
-def _oog_route_note(equipment: str, kci: bool) -> str:
+def _oog_route_note(equipment: str, kci: bool) -> str | None:
+    # In-gauge ("ig") is treated as the "default" equipment: no route note
+    # at all when there's no KCI restriction, and the bare "...KCI" text
+    # (no "(IG)" parenthetical) when there is - verified directly against
+    # reference/2_OPUS/17_LAWC TIER 1's real RATES sheet (every prefix O/F,
+    # cgo_type DR row has Route Note blank unless KCI-flagged, and the
+    # KCI-flagged ones read exactly "...Vessel Service Lane: KCI", no
+    # "(IG)"). OH/OWOH/OW always get a route note, KCI or not.
+    if equipment == "ig":
+        return "Rates are applicable for Vessel Service Lane: KCI" if kci else None
     label = equipment.upper()
     if kci:
         return f"Rates are applicable for Vessel Service Lane: KCI ({label})"
     return label
 
 
-def _oog_pp_route_note(equipment: str, kci: bool) -> str | None:
-    # OPUS RATES PORT-PORT ground truth drops the "(IG)" suffix for the
-    # in-gauge equipment specifically - blank when there's no KCI note,
-    # bare "...KCI" (no parenthetical) when there is. OH/OWOH/OW keep the
-    # exact same route_note as the RATES sheet. Verified, not a guessable
-    # symmetry (IG is the only one treated as the "default" equipment).
-    if equipment == "ig":
-        return "Rates are applicable for Vessel Service Lane: KCI" if kci else None
-    return _oog_route_note(equipment, kci)
+# "REEFER DRY AS DANGEROUS" - user-confirmed (2026-08-26, not derivable
+# from raw MRG text): Non-Operating Reefer ("LAWC NOR" sheet) cargo that's
+# dangerous gets filed as D/DG (folded into G0004/S.E.A_JPN_SA_AU_NZ's
+# regular dry-and-dangerous bucket) instead of R/DG, with this route note
+# explaining why. Applies ONLY to NOR (never Reefer - REEFER_CONFIG's
+# cgo_type "RF" never matches the DR-only DG-duplication rule anyway, so
+# Reefer never had a DG variant to begin with) - see the nor_rows branch
+# below. Combines with any route_note the NOR row already carries (e.g.
+# COBUN's AX3 vessel-lane note) via " | ", confirmed against
+# reference/2_OPUS/15_LAWC FAK and 17_LAWC TIER 1's real RN/RATES sheets.
+SEA_DG_ROUTE_NOTE = "REEFER DRY AS DANGEROUS"
+
+
+def _sea_dg_route_note(existing: str | None) -> str:
+    return f"{SEA_DG_ROUTE_NOTE} | {existing}" if existing else SEA_DG_ROUTE_NOTE
 
 
 def _classify_oog_equipment(container_label: str) -> str:

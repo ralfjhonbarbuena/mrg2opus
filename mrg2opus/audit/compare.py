@@ -77,6 +77,17 @@ def read_special_note_sheet(wb: Workbook, sheet_name: str = cols.SHEET_NAME_SPEC
     return rows
 
 
+def read_route_note_sheet(wb: Workbook, sheet_name: str) -> list[dict[str, Any]]:
+    ws = wb[find_sheet(wb, sheet_name)]
+    rows = []
+    for row in ws.iter_rows(min_row=2):
+        values = [c.value for c in row[: len(cols.RN_ROW_FIELDS)]]
+        if all(v is None for v in values):
+            continue
+        rows.append(dict(zip(cols.RN_ROW_FIELDS, values)))
+    return rows
+
+
 def _normalize(value: Any) -> Any:
     if isinstance(value, Decimal):
         return float(value)

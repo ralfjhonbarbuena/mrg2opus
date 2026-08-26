@@ -105,6 +105,42 @@ SPECIAL_NOTE_ROW_FIELDS = [
     "por", "pol", "pod", "delivery", "node", "cmdt",
 ]
 
+# --- RN (ROUTE NOTE): single header row --------------------------------------
+# Verified directly against reference/2_OPUS/15_LAWC FAK's real "RN" sheet -
+# same shape as CMDT_NOTE_HEADER (Header Seq through CMDT) plus a Route Seq
+# column (2nd position) and 10 trailing columns (Receiving Term through
+# Premium) that CMDT_NOTE_HEADER above does NOT have - CMDT_NOTE_HEADER was
+# verified against CSE.xlsx's older bundled sample, which appears to have a
+# shorter/different real header; not reconciled here, out of scope for the
+# ROUTE NOTE feature this was built for.
+RN_HEADER = [
+    "Header\nSeq", "Route\nSeq", "Note\nSeq", "Contents", "Charge \nSeq", "Code",
+    "Application\nEffective", "Application\nExpires", "Application",
+    "Cur.", "Cal.", "Amount", "Pay Term", "Pay Ofc", "Payer", "Per", "CGO\nType",
+    "IMDG\nClass", "PSA Grp.", "Food\nGrade", "Lane", "T/S\nPort", "Canal", "VVD", "SOC",
+    "POR", "POL", "POD", "DEL", "Node", "CMDT",
+    "Receiving\nTerm", "Delivery\nTerm", "Weight\n(=> Metric Ton)", "Weight\n( < Metric Ton)",
+    "Direct\nCall", "Bar Type", "S/I", "M'ty Pick up CY", "M'ty Return CY", "Premium",
+]
+
+RN_ROW_FIELDS = [
+    "header_seq", "route_seq", "note_seq", "contents", "charge_seq", "code",
+    "application_effective", "application_expires", "application",
+    "cur", "cal", "amount", "pay_term", "pay_ofc", "payer", "per", "cgo_type",
+    "imdg_class", "psa_grp", "food_grade", "lane", "ts_port", "canal", "vvd", "soc",
+    "por", "pol", "pod", "delivery", "node", "cmdt",
+    "receiving_term", "delivery_term", "weight_gte_mt", "weight_lt_mt",
+    "direct_call", "bar_type", "s_i", "mty_pickup_cy", "mty_return_cy", "premium",
+]
+
+# --- Legacy bundled-sample sheet names ---------------------------------------
+# These match the literal sheet names inside the older, hand-prepared
+# "Sample MRGs with OPUS FORMATS/*.xlsx" fixtures every tests/test_parsers_*.py
+# golden test reads from - NOT the real OPUS filing convention (see
+# excel_io/writer.py's _sheet_names_for_suffix for that, and the
+# project-opus-note-sheet-taxonomy memory for the full naming story). Do not
+# change these values - every lane's regression test depends on them matching
+# those static files' actual sheet names.
 SHEET_NAME_RATES = "OPUS RATES"
 SHEET_NAME_RATES_PORT_PORT = "OPUS RATES PORT-PORT"
 SHEET_NAME_ARBS = "OPUS ARBS"

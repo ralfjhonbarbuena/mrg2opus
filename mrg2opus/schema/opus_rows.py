@@ -178,6 +178,30 @@ class SpecialNoteRow(CmdtNoteRow):
     """Same shape as CmdtNoteRow; written to a separate OPUS SPECIAL NOTE sheet."""
 
 
+class RouteNoteRow(CmdtNoteRow):
+    """Scoped to a specific route pair rather than a whole commodity
+    sequence (see project-opus-note-sheet-taxonomy memory) - written to the
+    real OPUS system's "RN" sheet. Same shape as CmdtNoteRow plus route_seq
+    (links back to the RatesRow it was derived from - see RatesRow.route_seq)
+    and the 10 trailing columns confirmed on the real RN sheet
+    (schema/opus_columns.py::RN_HEADER) that CmdtNoteRow doesn't carry.
+    Unlike CMDT NOTE, real RN rows are header-only (charge_seq/code are
+    always 1/"APP", no child charge-code rows) - there's no per-route
+    surcharge-code breakdown to attach."""
+
+    route_seq: Optional[int] = None
+    receiving_term: Optional[str] = None
+    delivery_term: Optional[str] = None
+    weight_gte_mt: Optional[str] = None
+    weight_lt_mt: Optional[str] = None
+    direct_call: Optional[str] = None
+    bar_type: Optional[str] = None
+    s_i: Optional[str] = None
+    mty_pickup_cy: Optional[str] = None
+    mty_return_cy: Optional[str] = None
+    premium: Optional[str] = None
+
+
 class OpusRowSet(BaseModel):
     """Everything one parser run produces, ready for excel_io.writer."""
 
@@ -186,3 +210,4 @@ class OpusRowSet(BaseModel):
     arbs: list[ArbsRow] = []
     cmdt_notes: list[CmdtNoteRow] = []
     special_notes: list[SpecialNoteRow] = []
+    route_notes: list[RouteNoteRow] = []

@@ -10,7 +10,7 @@ from openpyxl import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 from mrg2opus.schema import opus_columns as cols
-from mrg2opus.schema.opus_rows import ArbsRow, CmdtNoteRow, OpusRowSet, RatesRow, SpecialNoteRow
+from mrg2opus.schema.opus_rows import ArbsRow, CmdtNoteRow, OpusRowSet, RatesRow, RouteNoteRow, SpecialNoteRow
 
 
 def _write_rates_sheet(wb: Workbook, sheet_name: str, rows: list[RatesRow]) -> None:
@@ -48,18 +48,32 @@ def _write_special_note_sheet(wb: Workbook, sheet_name: str, rows: list[SpecialN
         ws.append([data[field_name] for field_name in cols.SPECIAL_NOTE_ROW_FIELDS])
 
 
+def _write_route_note_sheet(wb: Workbook, sheet_name: str, rows: list[RouteNoteRow]) -> None:
+    ws: Worksheet = wb.create_sheet(sheet_name)
+    ws.append(cols.RN_HEADER)
+    for row in rows:
+        data = row.model_dump()
+        ws.append([data[field_name] for field_name in cols.RN_ROW_FIELDS])
+
+
 def _sheet_names_for_suffix(suffix: str) -> dict[str, str]:
-    """Naming convention confirmed against EAF.xlsx's sub-lane sheets: the
-    suffix is appended directly to the base sheet name with a hyphen (e.g.
-    'OPUS RATES-TZDAR', 'OPUS RATES-TZDAR PORT-PORT', 'OPUS CMDT NOTE-TZDAR'),
-    or the plain base name when there's no sub-lane (suffix "")."""
+    """Real OPUS filing sheet names (see project-opus-note-sheet-taxonomy
+    memory) - NOT the schema/opus_columns.py SHEET_NAME_* constants, which
+    match the older bundled sample fixtures' own naming instead. Naming
+    convention for sub-lanes confirmed against EAF.xlsx's sub-lane sheets:
+    the suffix is appended directly to the base sheet name with a hyphen
+    (e.g. 'RATES-TZDAR', 'RATES-TZDAR PORT-PORT', 'CMDT NOTE-TZDAR'), or the
+    plain base name when there's no sub-lane (suffix "") - unconfirmed
+    against real ground truth for a real multi-sub-lane filing, since no
+    EAF reference file exists yet; kept as the least-surprise default."""
     tag = f"-{suffix}" if suffix else ""
     return {
-        "rates": f"OPUS RATES{tag}",
-        "rates_port_port": f"OPUS RATES{tag} PORT-PORT",
-        "arbs": f"OPUS ARBS{tag}",
-        "cmdt_notes": f"OPUS CMDT NOTE{tag}",
-        "special_notes": f"OPUS SPECIAL NOTE{tag}",
+        "rates": f"RATES{tag}",
+        "rates_port_port": f"RATES{tag} PORT-PORT",
+        "arbs": f"ORIGIN ARBS{tag}",
+        "cmdt_notes": f"CMDT NOTE{tag}",
+        "special_notes": f"SPECIAL NOTE{tag}",
+        "route_notes": f"RN{tag}",
     }
 
 
@@ -74,6 +88,8 @@ def _write_row_set(wb: Workbook, row_set: OpusRowSet, names: dict[str, str]) -> 
         _write_cmdt_note_sheet(wb, names["cmdt_notes"], row_set.cmdt_notes)
     if row_set.special_notes:
         _write_special_note_sheet(wb, names["special_notes"], row_set.special_notes)
+    if row_set.route_notes:
+        _write_route_note_sheet(wb, names["route_notes"], row_set.route_notes)
 
 
 def write_opus_workbook(

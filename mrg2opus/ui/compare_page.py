@@ -146,7 +146,7 @@ def _run_comparison(row_sets: dict, ref_wb: Workbook, rates_mode: str, lane_id: 
         tag = f"-{suffix}" if suffix else ""
         if want_grouped:
             r = _compare_keyed_sheet(
-                "RATES", suffix, f"OPUS RATES{tag}",
+                "RATES", suffix, f"RATES{tag}",
                 [x.model_dump() for x in row_set.rates], ref_wb,
                 rates_row_key, cols.RATES_ROW_FIELDS, read_rates_sheet, ignore_fields=rates_ignore,
             )
@@ -154,28 +154,28 @@ def _run_comparison(row_sets: dict, ref_wb: Workbook, rates_mode: str, lane_id: 
                 results.append(r)
         if want_exploded:
             r = _compare_keyed_sheet(
-                "RATES PORT-PORT", suffix, f"OPUS RATES{tag} PORT-PORT",
+                "RATES PORT-PORT", suffix, f"RATES{tag} PORT-PORT",
                 [x.model_dump() for x in row_set.rates_port_port], ref_wb,
                 rates_row_key, cols.RATES_ROW_FIELDS, read_rates_sheet, ignore_fields=port_port_ignore,
             )
             if r is not None:
                 results.append(r)
         r = _compare_keyed_sheet(
-            "ARBS", suffix, f"OPUS ARBS{tag}",
+            "ARBS", suffix, f"ORIGIN ARBS{tag}",
             [x.model_dump() for x in row_set.arbs], ref_wb,
             arbs_row_key, cols.ARBS_ROW_FIELDS, read_arbs_sheet,
         )
         if r is not None:
             results.append(r)
         r = _compare_block_sheet(
-            "CMDT NOTE", suffix, f"OPUS CMDT NOTE{tag}",
+            "CMDT NOTE", suffix, f"CMDT NOTE{tag}",
             [x.model_dump() for x in row_set.cmdt_notes], ref_wb,
             cols.CMDT_NOTE_ROW_FIELDS, read_cmdt_note_sheet, ignore_fields=cmdt_ignore,
         )
         if r is not None:
             results.append(r)
         r = _compare_block_sheet(
-            "SPECIAL NOTE", suffix, f"OPUS SPECIAL NOTE{tag}",
+            "SPECIAL NOTE", suffix, f"SPECIAL NOTE{tag}",
             [x.model_dump() for x in row_set.special_notes], ref_wb,
             cols.SPECIAL_NOTE_ROW_FIELDS, read_special_note_sheet, ignore_fields=special_ignore,
         )
