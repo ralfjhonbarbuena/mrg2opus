@@ -68,7 +68,7 @@ streamlit, PyYAML, platformdirs, python-dateutil, pytest).
 | **LAEC** | ✅ Done, near-exact (documented gaps) | Same shape as CSE but doubled: every sheet splits into Non-ISC/ISC sections. "R5 NOR" now defaults to its own commodity description (see §3.6). | 4/4 pass |
 | **LAWC** | ✅ Done, exact match | 4 Dry-shaped grids (main/SEA/ISC/OOG) + Reefer + NOR sheets, each its own commodity group. OOG has 4 equipment-type column-pairs mapping to Prefix O/F twins or F-only. RATES PORT-PORT uses a completely different commodity code namespace than RATES for the same data. Reefer/NOR now default to their own commodity descriptions (see §3.6). | 4/4 pass |
 
-Full test suite: **79/79 passing** (`./.venv/Scripts/python.exe -m pytest tests/ -v`, ~1.5-2 min) - see §3.15 for the 2026-08-26 rebuild onto `reference/` ground truth (SAF has no golden tests anymore; `test_compare_engine_regression.py`/`golden.py`/`conftest.py` were removed as redundant/dead), §3.16 for the `excluded_charge_codes` feature added the same day (`test_cmdt_notes.py` + 1 EAF end-to-end test), and §3.17 for sequential default commodity codes (`test_commodity_utils.py`).
+Full test suite: **83/83 passing** (`./.venv/Scripts/python.exe -m pytest tests/ -v`, ~1.5-2 min) - see §3.15 for the 2026-08-26 rebuild onto `reference/` ground truth (SAF has no golden tests anymore; `test_compare_engine_regression.py`/`golden.py`/`conftest.py` were removed as redundant/dead), §3.16 for the `excluded_charge_codes` feature added the same day (`test_cmdt_notes.py` + 1 EAF end-to-end test), §3.17 for sequential default commodity codes (`test_commodity_utils.py`), and §3.18 for the CSE 2-file merge fix (4 new `test_excel_io_merge.py` tests + CSE's own golden tests now cover the full 2-file merge).
 
 ## 3.5 Phase 2 — Streamlit wizard UI
 
@@ -966,6 +966,44 @@ first encountered while parsing.
 - Tests: new `tests/test_commodity_utils.py` (order preservation +
   unique-code assignment).
 
+## 3.18 Fixed: CSE's real 2-file upload crash
+
+Follow-up from §3.15/§3.16: uploading CSE's two real files together (the
+main FAK file plus a separate "...for VELAG and VEPBL" Venezuela file)
+crashed with `DuplicateSheetError` - both files share 4 sheet names
+("CSE", "DG surcharges", "Yangtze ARB Add-on", "Free Time") and
+`excel_io/merge.py` had no rule to reconcile them, despite its own
+module docstring describing exactly this real-world 2-file pattern.
+
+- **`excel_io/merge.py::merge_workbooks()`** now accepts an optional
+  `names` list (the original filenames, same order as workbooks). When a
+  colliding file's own name mentions "VELAG"/"VEPBL" (case-insensitive -
+  the confirmed real pattern, not a content-based guess): its `"CSE"`
+  sheet is renamed to `"CSE VE"` (the name `cse.py::COMMODITY_VE`
+  expects) instead of raising, and its duplicate `"DG surcharges"`/
+  `"Yangtze ARB Add-on"`/`"Free Time"` sheets are silently dropped (the
+  main file's copies win - confirmed either byte-identical or a
+  formatting-only variant, not Venezuela-specific data). Any OTHER
+  collision (no `names` given, or a name that doesn't match the pattern)
+  still raises exactly as before - `tests/test_excel_io_merge.py`'s
+  original `test_duplicate_sheet_name_raises` is unchanged.
+- `ui/mrg_upload.py::load_and_classify()` and both its callers
+  (`step1_upload.py`, `compare_page.py`) now thread the uploaded
+  filenames through to `merge_workbooks()`.
+- **A second real bug found while verifying the fix**: `cse.py`'s "In
+  guage guideline" sheet parsing had a hardcoded `INGAUGE_MAX_COL = 28`
+  that silently dropped 2 real destinations (BRVLD, GYGEO) sitting past
+  column 28 in this same real file - the same "real file wider than the
+  verified minimum" class of bug already fixed once for the main "CSE"
+  grid (`_resolve_grid_config`), just not applied to this sheet. Now
+  widens to `max(INGAUGE_MAX_COL, ws.max_column)`.
+- `tests/test_parsers_cse.py` now merges both real files (previously
+  documented as only testing the main file alone) and asserts full
+  parity - **0 missing, 0 extra, 0 field mismatches** against all 4898
+  real ground-truth RATES rows.
+- Verified live in the browser: uploading both real CSE files together
+  no longer crashes, parses to exactly 4898 rows matching ground truth.
+
 ## 5. Files touched this session (everything above is new)
 
 Nothing pre-existed before this session — the whole `mrg2opus/` package,
@@ -1077,7 +1115,7 @@ cd "C:\Users\romsae-desktop\claude\PROCESS INNOVATION HACKATHON"
 ./.venv/Scripts/python.exe -m pytest tests/ -v
 ```
 
-Should show 79 passed. If not, something regressed since this note was
+Should show 83 passed. If not, something regressed since this note was
 written — bisect before building on top of it.
 
 To check the UI itself is still working end-to-end, run

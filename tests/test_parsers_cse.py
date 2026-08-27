@@ -16,25 +16,24 @@ from mrg2opus.audit.compare import (
     read_rates_sheet,
     read_special_note_sheet,
 )
+from mrg2opus.excel_io.merge import merge_workbooks
 from mrg2opus.parsers.cse import COMMODITY_MAIN, COMMODITY_MAOVLD, COMMODITY_NOR_MAOVLD, COMMODITY_NOR_PA, CSEParser
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema import opus_columns as cols
 
 REFERENCE_DIR = Path(__file__).resolve().parents[1] / "reference"
 RAW_DIR = REFERENCE_DIR / "1_MRGs" / "1_CSE FAK, CSE FAK FOR VELAG AND VEPBL"
-# Only the main file - the second "for VELAG and VEPBL" file can't be
-# merged with it today (both share 4 sheet names and excel_io/merge.py has
-# no rule to rename the second file's "CSE" sheet to "CSE VE" before
-# combining - a real, separately-flagged bug, see the spawned "Fix CSE
-# 2-file upload merge crash" follow-up task). This means VELAG/VEPBL-
-# specific destinations (VELAG, VEPBL, BRVLD, GYGEO, HNPCR, ...) are
-# expected to be MISSING from these tests until that's fixed - documented
-# below rather than silently ignored.
-RAW_PATH = RAW_DIR / "CSE Pricing Guideline (15-21  AUG 2026 ) FAK.xlsx"
+# CSE's real upload is 2 files - the main FAK file plus a separate "for
+# VELAG and VEPBL" (Venezuela) file - merged the same way the real UI
+# upload flow does (excel_io.merge.merge_workbooks, using the second
+# file's own name to detect it's the Venezuela supplement rather than an
+# accidental duplicate - see that module's docstring).
+RAW_PATH_MAIN = RAW_DIR / "CSE Pricing Guideline (15-21  AUG 2026 ) FAK.xlsx"
+RAW_PATH_VE = RAW_DIR / "CSE Pricing Guideline( 15-21 AUG 2026 ) FAK  for VELAG and VEPBL.xlsx"
 OPUS_PATH = REFERENCE_DIR / "2_OPUS" / "1_CSE FAK, CSE FAK FOR VELAG AND VEPBL" / "CSE Pricing Guideline (15-21  AUG 2026 ) FAK OPUS.xlsx"
 
 pytestmark = pytest.mark.skipif(
-    not RAW_PATH.exists() or not OPUS_PATH.exists(),
+    not RAW_PATH_MAIN.exists() or not RAW_PATH_VE.exists() or not OPUS_PATH.exists(),
     reason="reference/ ground-truth files not present in this checkout",
 )
 
@@ -42,10 +41,9 @@ pytestmark = pytest.mark.skipif(
 #   - type: forced to "C" on every row for every lane - CSE's own ground
 #     truth leaves it blank (user-directed business rule, not derived).
 #   - commodity_group_description: "CSE", "NOR(PA)" used to share one
-#     combined description with "CSE VE" (not covered here - see RAW_PATH
-#     comment); each raw sheet now defaults to its own description
-#     instead - see test_cse_cmdt_note_default_splits_by_sheet and
-#     test_cse_cmdt_note_merges_when_descriptions_match below.
+#     combined description with "CSE VE" - each raw sheet now defaults to
+#     its own description instead - see
+#     test_cse_cmdt_note_default_splits_by_sheet below.
 #   - commodity_group_code/cmdt_seq/commodity_note: this real reference
 #     file leaves commodity_group_code entirely blank - user-customizable
 #     per filing (see project-mrg-lane-scope memory), same category of gap
@@ -54,7 +52,9 @@ RATES_IGNORE_FIELDS = {"type", "commodity_group_description", "commodity_group_c
 
 
 def _run_cse():
-    wb = openpyxl.load_workbook(RAW_PATH, data_only=True)
+    wb1 = openpyxl.load_workbook(RAW_PATH_MAIN, data_only=True)
+    wb2 = openpyxl.load_workbook(RAW_PATH_VE, data_only=True)
+    wb = merge_workbooks([wb1, wb2], [RAW_PATH_MAIN.name, RAW_PATH_VE.name])
     parser = CSEParser()
     return parser.run(wb, MappingProfile())
 
@@ -67,7 +67,7 @@ def test_cse_rates_matches_ground_truth():
     expected = read_rates_sheet(ref_wb, "RATES")
 
     result = diff_by_key(generated, expected, key_fn=rates_row_key, fields=cols.RATES_ROW_FIELDS, ignore_fields=RATES_IGNORE_FIELDS)
-    # missing is expected here - see RAW_PATH's VELAG/VEPBL comment.
+    assert not result.missing, f"missing {len(result.missing)} expected rows, e.g. {list(result.missing)[:5]}"
     assert not result.extra, f"{len(result.extra)} unexpected generated rows, e.g. {list(result.extra)[:5]}"
     assert not result.field_mismatches, f"{len(result.field_mismatches)} field mismatches, e.g. {result.field_mismatches[:10]}"
 
@@ -79,16 +79,16 @@ def test_cse_rates_matches_ground_truth():
 
 
 def test_cse_cmdt_note_default_splits_by_sheet():
-    """Default behavior: "CSE", "NOR(PA)", "CSE (MAOVLD)", "NOR (MAOVLD)",
-    and "In guage guideline" each get their own description (their own raw
-    sheet name) and their own CMDT NOTE block - a deliberate, user-directed
-    default (see RATES_IGNORE_FIELDS comment). "CSE VE" isn't covered here
-    (see RAW_PATH's VELAG/VEPBL comment)."""
+    """Default behavior: "CSE", "CSE VE", "NOR(PA)", "CSE (MAOVLD)",
+    "NOR (MAOVLD)", and "In guage guideline" each get their own
+    description (their own raw sheet name) and their own CMDT NOTE
+    block - a deliberate, user-directed default (see RATES_IGNORE_FIELDS
+    comment)."""
     row_set = _run_cse()
     descriptions = {r.commodity_group_description for r in row_set.rates}
-    assert descriptions == {"CSE", "CSE (MAOVLD)", "NOR(PA)", "NOR (MAOVLD)", "IN GUAGE GUIDELINE (IG)"}
+    assert descriptions == {"CSE", "CSE VE", "CSE (MAOVLD)", "NOR(PA)", "NOR (MAOVLD)", "IN GUAGE GUIDELINE (IG)"}
     blocks = [r for r in row_set.cmdt_notes if r.code == "APP"]
-    assert len(blocks) == 5
+    assert len(blocks) == 6
 
 
 # No test_cse_cmdt_note_merges_when_descriptions_match here: the real
@@ -277,7 +277,7 @@ def test_cse_skip_dg_generation_suppresses_dg_rows_for_one_sheet_only():
     }
     assert "DG" in main_default_cgo_types
 
-    wb = openpyxl.load_workbook(RAW_PATH, data_only=True)
+    wb = openpyxl.load_workbook(RAW_PATH_MAIN, data_only=True)
     parser = CSEParser()
     profile = MappingProfile(skip_dg_generation={COMMODITY_MAIN[0]: True})
     row_set = parser.run(wb, profile)

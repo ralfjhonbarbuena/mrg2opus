@@ -413,8 +413,16 @@ class CSEParser(BaseMRGParser):
     def _parse_ingauge_sheet(self, ws: Worksheet) -> list[InGaugeRow]:
         # 2 columns per destination (20'OT/FR, 40'OT/FR); the code sits in
         # the first of each pair (flatten_pod_header carries it forward).
+        # max_col widens to the real sheet's own extent when it's wider
+        # than the verified minimum - confirmed real gap (2026-08-27):
+        # reference/1_MRGs/1_CSE FAK.../CSE Pricing Guideline (15-21 AUG
+        # 2026) FAK.xlsx has 2 more destinations (BRVLD col 29, GYGEO col
+        # 33) past the old hardcoded INGAUGE_MAX_COL=28, silently dropped
+        # entirely - same "real file wider than bundled sample" class of
+        # bug already fixed once for the main "CSE"/"CSE (MAOVLD)" grids
+        # (see _resolve_grid_config), just not applied here yet.
         header_cols = flatten_pod_header(
-            ws, INGAUGE_POD_CODE_ROW, INGAUGE_CONTAINER_LABEL_ROW, INGAUGE_MIN_COL, INGAUGE_MAX_COL
+            ws, INGAUGE_POD_CODE_ROW, INGAUGE_CONTAINER_LABEL_ROW, INGAUGE_MIN_COL, max(INGAUGE_MAX_COL, ws.max_column)
         )
         out: list[InGaugeRow] = []
         for row_idx in range(INGAUGE_DATA_MIN_ROW, INGAUGE_DATA_MAX_ROW + 1):

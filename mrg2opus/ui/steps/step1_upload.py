@@ -46,7 +46,7 @@ def render(state: WizardState) -> None:
 
     if state.workbook is None:
         try:
-            state.workbook, state.classification_results = load_and_classify(payloads)
+            state.workbook, state.classification_results = load_and_classify(payloads, names)
         except DuplicateSheetError as exc:
             st.error(str(exc))
             return

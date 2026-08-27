@@ -284,7 +284,7 @@ def render() -> None:
 
     if state.workbook is None:
         try:
-            state.workbook, state.classification_results = load_and_classify(mrg_payloads)
+            state.workbook, state.classification_results = load_and_classify(mrg_payloads, mrg_names)
         except DuplicateSheetError as exc:
             st.error(str(exc))
             return

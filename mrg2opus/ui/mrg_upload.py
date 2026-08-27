@@ -26,14 +26,20 @@ def fingerprint_uploads(names: list[str], payloads: list[bytes]) -> str:
     return digest.hexdigest()
 
 
-def load_and_classify(payloads: list[bytes]) -> tuple[Workbook, list[ClassificationResult]]:
+def load_and_classify(
+    payloads: list[bytes], names: list[str] | None = None
+) -> tuple[Workbook, list[ClassificationResult]]:
     """Load each payload as a workbook, merge them into one (raises
     excel_io.merge.DuplicateSheetError on a repeated sheet name across
-    inputs), and classify the result. Raises on failure rather than
-    catching - error PRESENTATION (st.error wording/placement) stays a
-    caller concern since it differs slightly between the wizard and
-    Compare mode."""
+    inputs, unless it matches a known safe pattern - see excel_io/merge.py's
+    module docstring for CSE's real 2-file upload), and classify the
+    result. names, when given, are the original filenames in the same
+    order as payloads - forwarded to merge_workbooks() for that same
+    special case; omit it to always raise on any collision. Raises on
+    failure rather than catching - error PRESENTATION (st.error wording/
+    placement) stays a caller concern since it differs slightly between
+    the wizard and Compare mode."""
     workbooks = [openpyxl.load_workbook(io.BytesIO(payload), data_only=True) for payload in payloads]
-    wb = merge_workbooks(workbooks)
+    wb = merge_workbooks(workbooks, names)
     results = classify_all(wb)
     return wb, results

@@ -65,3 +65,57 @@ def test_duplicate_sheet_name_raises():
 
     with pytest.raises(DuplicateSheetError):
         merge_workbooks([wb1, wb2])
+
+
+def test_duplicate_sheet_name_still_raises_when_names_given_but_not_venezuela():
+    """names alone don't disable the safety check - only a name that
+    actually matches the VELAG/VEPBL pattern does."""
+    wb1 = _wb_with_sheet("CSE", {(1, 1): "main"})
+    wb2 = _wb_with_sheet("CSE", {(1, 1): "other"})
+
+    with pytest.raises(DuplicateSheetError):
+        merge_workbooks([wb1, wb2], ["main.xlsx", "accidentally_reuploaded.xlsx"])
+
+
+def test_cse_venezuela_supplement_renames_colliding_cse_sheet():
+    """Real-world case (reference/1_MRGs/1_CSE FAK.../): CSE's second file
+    is named "...for VELAG and VEPBL" and its own "CSE" sheet is genuinely
+    different (Venezuela) data the parser expects under "CSE VE" - not an
+    accidental duplicate upload."""
+    wb1 = _wb_with_sheet("CSE", {(1, 1): "main"})
+    wb2 = _wb_with_sheet("CSE", {(1, 1): "venezuela"})
+
+    merged = merge_workbooks(
+        [wb1, wb2], ["CSE Pricing Guideline FAK.xlsx", "CSE Pricing Guideline FAK for VELAG and VEPBL.xlsx"]
+    )
+
+    assert set(merged.sheetnames) == {"CSE", "CSE VE"}
+    assert merged["CSE"].cell(row=1, column=1).value == "main"
+    assert merged["CSE VE"].cell(row=1, column=1).value == "venezuela"
+
+
+def test_cse_venezuela_supplement_drops_duplicate_support_sheets():
+    """The same VELAG/VEPBL file re-bundles lane-wide support sheets
+    ("DG surcharges", "Yangtze ARB Add-on", "Free Time") that aren't
+    Venezuela-specific - the main file's copy wins, the duplicate is
+    dropped rather than raising or silently overwriting."""
+    wb1 = _wb_with_sheet("CSE", {(1, 1): "main"})
+    wb1.create_sheet("DG surcharges")
+    wb1["DG surcharges"].cell(row=1, column=1, value="main dg")
+    wb2 = _wb_with_sheet("CSE", {(1, 1): "venezuela"})
+    wb2.create_sheet("DG surcharges")
+    wb2["DG surcharges"].cell(row=1, column=1, value="ve dg")
+
+    merged = merge_workbooks([wb1, wb2], ["main.xlsx", "for VELAG and VEPBL.xlsx"])
+
+    assert set(merged.sheetnames) == {"CSE", "CSE VE", "DG surcharges"}
+    assert merged["DG surcharges"].cell(row=1, column=1).value == "main dg"
+
+
+def test_venezuela_marker_matches_case_insensitively():
+    wb1 = _wb_with_sheet("CSE", {(1, 1): "main"})
+    wb2 = _wb_with_sheet("CSE", {(1, 1): "venezuela"})
+
+    merged = merge_workbooks([wb1, wb2], ["main.xlsx", "for vepbl.xlsx"])
+
+    assert "CSE VE" in merged.sheetnames
