@@ -67,8 +67,9 @@ streamlit, PyYAML, platformdirs, python-dateutil, pytest).
 | **CSE** | ✅ Done, near-exact (documented gaps) | 3 rate grids + 2 reefer sheets + in-gauge + Yangtze ARBS + DG surcharges→SPECIAL NOTE. Richest lane. Each raw sheet now defaults to its own commodity description (see §3.6). "CSE" grid sheet now tolerates a shifted header row + wider real-file destination/data extent (see §3.8). Withdrawn-location exclusion (see §3.9). | 9/9 pass |
 | **LAEC** | ✅ Done, near-exact (documented gaps) | Same shape as CSE but doubled: every sheet splits into Non-ISC/ISC sections. "R5 NOR" now defaults to its own commodity description (see §3.6). | 4/4 pass |
 | **LAWC** | ✅ Done, exact match | 4 Dry-shaped grids (main/SEA/ISC/OOG) + Reefer + NOR sheets, each its own commodity group. OOG has 4 equipment-type column-pairs mapping to Prefix O/F twins or F-only. RATES PORT-PORT uses a completely different commodity code namespace than RATES for the same data. Reefer/NOR now default to their own commodity descriptions (see §3.6). | 4/4 pass |
+| **WAF** | ✅ Done, exact match | Single raw sheet, 9-POD x 3-container grid over ~41 fixed origins. RATES + CMDT NOTE only (no ARBS/SPECIAL NOTE/RN). D/DR rows each also file an identical D/DG duplicate under their own commodity group (see §3.19). | 6/6 pass |
 
-Full test suite: **83/83 passing** (`./.venv/Scripts/python.exe -m pytest tests/ -v`, ~1.5-2 min) - see §3.15 for the 2026-08-26 rebuild onto `reference/` ground truth (SAF has no golden tests anymore; `test_compare_engine_regression.py`/`golden.py`/`conftest.py` were removed as redundant/dead), §3.16 for the `excluded_charge_codes` feature added the same day (`test_cmdt_notes.py` + 1 EAF end-to-end test), §3.17 for sequential default commodity codes (`test_commodity_utils.py`), and §3.18 for the CSE 2-file merge fix (4 new `test_excel_io_merge.py` tests + CSE's own golden tests now cover the full 2-file merge).
+Full test suite: **93/93 passing** (`./.venv/Scripts/python.exe -m pytest tests/ -v`, ~2 min) - see §3.15 for the 2026-08-26 rebuild onto `reference/` ground truth (SAF has no golden tests anymore; `test_compare_engine_regression.py`/`golden.py`/`conftest.py` were removed as redundant/dead), §3.16 for the `excluded_charge_codes` feature added the same day (`test_cmdt_notes.py` + 1 EAF end-to-end test), §3.17 for sequential default commodity codes (`test_commodity_utils.py`), §3.18 for the CSE 2-file merge fix (4 new `test_excel_io_merge.py` tests + CSE's own golden tests now cover the full 2-file merge), §3.19 for the new West Africa WAF lane (`test_parsers_waf.py`, 7 tests), and §3.20 for the RFA effective/expiry date override (4 new `test_cmdt_notes.py` cases).
 
 ## 3.5 Phase 2 — Streamlit wizard UI
 
@@ -848,13 +849,9 @@ suite needed rebuilding onto `reference/1_MRGs`/`2_OPUS` pairs instead.
     Fixed via new `_psa_contents()` helper.
 - **Follow-ups flagged, not fixed** (each would need its own investigation
   - do not assume any of these are simple):
-  - CSE's 2-file upload (`FAK.xlsx` + `...for VELAG and VEPBL.xlsx`)
-    crashes with `DuplicateSheetError` today - both share 4 sheet names
-    and `excel_io/merge.py` has no rule to rename the second file's `CSE`
-    sheet to `CSE VE` before combining, despite the module's own docstring
-    describing exactly this scenario. Spawned as a separate task
-    (`task_243523c4`). `test_parsers_cse.py` only tests the main file
-    alone until this is fixed (552 VELAG/VEPBL rows untested).
+  - ~~CSE's 2-file upload (`FAK.xlsx` + `...for VELAG and VEPBL.xlsx`)
+    crashes with `DuplicateSheetError`~~ - **FIXED, see §3.18.** (Was
+    spawned as a separate task, `task_243523c4`; fixed directly instead.)
   - LAEC: 210 real rows (all `DG`/`D`, all Argentina destinations e.g.
     `ARLPG`/`ARZAE`/`ARUSH`) are completely missing from what the parser
     generates - likely a DG-duplicate rule tied to the "ECSA Add-On" raw
@@ -1004,6 +1001,123 @@ module docstring describing exactly this real-world 2-file pattern.
 - Verified live in the browser: uploading both real CSE files together
   no longer crashes, parses to exactly 4898 rows matching ground truth.
 
+## 3.19 New lane: West Africa WAF
+
+First brand-new lane built from `reference/` alone (no old bundled
+sample ever existed for it) - a re-scan of `reference/` turned up 9
+lane families with real, tracker-`Completed` MRG+OPUS pairs and zero
+parser code (see project-mrg-lane-scope memory); this is the first.
+
+- Single raw sheet ("Asia WAF MRG FAK rate guideline"): a 9-POD (Apapa,
+  Tincan, Onne, Lekki, Tema, Abidjan, Lome, Cotonou, Dakar) x 3-container
+  (D2/D4/D5 -> 20/40/40HC) grid over ~41 fixed Asia/SEA origins. Output
+  scope is RATES + CMDT NOTE only (ground truth's own sheet is literally
+  named "SRCHG" - the already-known CMDT-NOTE naming drift) - no ARBS,
+  SPECIAL NOTE, or RN, confirmed against both real weekly ground-truth
+  files.
+- **New parser: `mrg2opus/parsers/waf.py`.** Origin/destination code
+  resolution needed ZERO hardcoded per-lane port table - the existing
+  Location Bank (`location_bank/fuzzy_match.py`) already resolved all 41
+  Asia/SEA origins correctly (shared with other lanes), confirmed by a
+  dry-run diff against the exact ground-truth code/description for every
+  one before writing a line of the real parser. Only the 9 West Africa
+  *destinations* were genuinely new - added to the Location Bank
+  (`data/location_bank.sqlite3`) as `source="manual_override"` records,
+  each with an exact alias matching the raw sheet's own POD label
+  (Apapa->NGAPP, Tincan->NGTIN, Onne->NGONN, Lekki->NGLKK, Tema->GHTEM,
+  Abidjan->CIABJ, Lome->TGLFW, Cotonou->BJCOO, Dakar->SNDKR).
+- New container map `mrg2opus/config/container_maps/waf.yaml` (D2/D4/D5 ->
+  20/40/40hc, no reefer).
+- Raw origins use a parenthetical via-clause format never seen before
+  ("Ganzhou (via Shekou)") - existing `split_location_text`'s via-regex
+  only handles the "via X" (no parens) form used elsewhere, so `waf.py`
+  has its own `_split_via()` for this lane.
+- Every base D/DR row also files an identical D/DG duplicate at the same
+  rate under its own commodity group ("<desc> - DG") - the raw sheet's
+  separate per-IMO-class HAZ/PSA add-on tables (its own "*HAZ/PSA tariff
+  table" blocks) are NOT reflected anywhere in either ground-truth file
+  (no extra charge codes, no ARBS), so they're out of scope and
+  deliberately not parsed at all.
+- Two new charge codes discovered and added to `schema/charge_codes.py`:
+  `CGD` ("CONGESTION SURCHARGE (D)") and `EPH` ("ELSEWHERE PAYMENT
+  HANDLING FEE" - verbatim 3 literal spaces between the two words, copied
+  exactly from ground truth text). The raw sheet's "Incl. BAF, HEA, EPH,
+  BRS, LSF, CGD, OBS, MBS, EFS;" text is comma-separated (not the
+  "/"-separated convention `cmdt_notes.py::parse_included_charge_codes`
+  handles), so `waf.py` has its own extraction regex; BRS is correctly
+  dropped (not in `INDIVIDUAL_CHARGE_CODES`, same already-known pattern
+  as EAF's BRS).
+- **Two real formatting quirks found only by diffing against ground
+  truth, not guessable from the raw sheet alone:**
+  - `Route Seq.` is a single running counter across the WHOLE 369-row
+    commodity-group block (all 9 PODs x 41 origins in encounter order),
+    NOT resetting per destination as most other lanes' route-seq-like
+    fields might suggest - confirmed the Tincan POD block continues
+    42, 43, ... rather than restarting at 1.
+  - This lane's own ground truth spells every multi-part origin/
+    destination name "CITY  SUBDIVISION" (double space, zero exceptions
+    across 37 distinct names in both weeks) instead of the Location
+    Bank's "CITY, SUBDIVISION" (comma) convention mined from other
+    lanes' ground truth - `waf.py::_clean_description()` converts.
+- Registered in both entry points (`cli.py`, `ui/app.py`)'s side-effect
+  import list; added to `tests/test_registry.py`'s `ALL_LANE_IDS` and
+  `SAMPLES` (confirmed 100% classification confidence, correctly
+  disambiguated from the similarly-named but distinct, still-unbuilt
+  "West Asia to West Africa" lane, whose sheet is literally named "WAF"
+  with title "West Asia WAF FAK rate guideline" - close enough in
+  wording that `sheet_name_patterns`/`title_keywords` needed to target
+  this lane's actual full sheet name, "Asia WAF MRG FAK rate guideline",
+  rather than a generic "WAF" substring).
+- New `tests/test_parsers_waf.py`: both real weekly pairs, **0 missing, 0
+  extra, 0 field mismatches** against all 738 real ground-truth RATES
+  rows each week, plus a CMDT NOTE content match (folder 9's own SRCHG
+  sheet carries an extra, verified-duplicate 18 rows belonging to the
+  NEXT week - a copy-paste leftover in that one ground-truth file itself,
+  not a parsing gap - documented and sliced off in the test rather than
+  chased). `excluded_charge_codes`/`skip_dg_generation` wiring also
+  covered.
+- Verified live in the browser: full 4-step wizard (upload -> 100%-
+  confidence classify -> 738-row preview -> sequential G0001/G0002
+  commodity codes auto-assigned -> export screen) end to end on a real
+  reference file.
+
+## 3.20 CMDT NOTE child rows' RFA effective/expiry override
+
+User clarified the exact business reason behind §3.19's documented gap
+(CMDT NOTE child rows' Application Effective/Expires not matching West
+Africa WAF's ground truth): the child dates aren't derived from the
+weekly rate validity at all - they're the charge code's own RFA (Rate
+Filing Agreement) window, a separate, usually longer-lived date pair a
+human filer enters per account. Confirmed filing-wide scope (same choice
+as §3.16's `excluded_charge_codes`, not per commodity group).
+
+- `MappingProfile` gains `rfa_effective_date`/`rfa_expiry_date: date |
+  None = None`. Unset (the default) keeps the pre-existing fallback
+  behavior (children mirror the weekly rate validity) exactly as before
+  this feature existed.
+- `cmdt_notes.py::build_cmdt_notes()` gains matching `rfa_effective`/
+  `rfa_expiry` params - each bound falls back to `validity_start`/
+  `validity_end` independently when its override is `None`. Only CHILD
+  rows are affected; the parent (`APP`) row always keeps the weekly rate
+  validity window regardless, matching every ground-truth example seen.
+  `build_notes_by_description()` already forwards `**build_kwargs`
+  unchanged, so no change needed there.
+- Threaded through every lane's own `build_cmdt_notes()`/
+  `build_notes_by_description()` call site (cse.py, laec.py, lawc.py,
+  eaf.py, saf.py, waf.py) - filing-wide, not lane-specific, even though
+  it was only directly confirmed against WAF's ground truth so far.
+- UI: `step3_customize.py`'s "Special instructions" section gains two
+  optional `st.date_input` widgets ("RFA effective date"/"RFA expiry
+  date", `value=None` when unset, confirmed renders as an empty
+  yyyy/mm/dd picker in Streamlit 1.62).
+- New tests: `test_cmdt_notes.py` (4 new cases - default fallback
+  unchanged, override applies to children only, bounds are independent)
+  and `test_parsers_waf.py::test_waf_rfa_override_matches_ground_truth_child_dates`
+  (end-to-end: reproduces WAF's exact real ground-truth child dates,
+  20260520-20261231, when the override is supplied). Verified live in
+  the browser: both date pickers render, accept input, and the filing
+  completes through Export with no error.
+
 ## 5. Files touched this session (everything above is new)
 
 Nothing pre-existed before this session — the whole `mrg2opus/` package,
@@ -1115,7 +1229,7 @@ cd "C:\Users\romsae-desktop\claude\PROCESS INNOVATION HACKATHON"
 ./.venv/Scripts/python.exe -m pytest tests/ -v
 ```
 
-Should show 83 passed. If not, something regressed since this note was
+Should show 93 passed. If not, something regressed since this note was
 written — bisect before building on top of it.
 
 To check the UI itself is still working end-to-end, run

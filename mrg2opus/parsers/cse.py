@@ -604,6 +604,8 @@ class CSEParser(BaseMRGParser):
             sequential_charge_seq=True,
             sort_text_names=False,  # verified: CSE's text preserves input order, not alphabetical
             excluded_codes=frozenset(config.excluded_charge_codes),
+            rfa_effective=config.rfa_effective_date,
+            rfa_expiry=config.rfa_expiry_date,
         )
 
         arbs = self._build_arbs(data)

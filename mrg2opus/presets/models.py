@@ -4,6 +4,7 @@ need re-configuring every run.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -64,3 +65,17 @@ class MappingProfile(BaseModel):
     # text mentions it. Applied uniformly to every lane's charge-code
     # list (see parsers/common/cmdt_notes.py::build_cmdt_notes).
     excluded_charge_codes: list[str] = Field(default_factory=list)
+    # Individual charge codes' (CMDT NOTE child rows') Application
+    # Effective/Expires dates normally just mirror the weekly rate
+    # validity window (see cmdt_notes.py::build_cmdt_notes) - but ground
+    # truth shows they're actually meant to be the charge code's own RFA
+    # (Rate Filing Agreement) window, a separate, usually longer-lived
+    # date pair a human filer enters per their account's own RFA (e.g.
+    # West Africa WAF's ground truth: parent/APP row uses that week's
+    # validity, every child code uses a much longer 2026-05-20 to
+    # 2026-12-31 window instead). Applied filing-wide (not per-group,
+    # same scope choice as excluded_charge_codes above) - when unset
+    # (None), children keep falling back to the rate validity window,
+    # same as before this field existed.
+    rfa_effective_date: Optional[date] = None
+    rfa_expiry_date: Optional[date] = None

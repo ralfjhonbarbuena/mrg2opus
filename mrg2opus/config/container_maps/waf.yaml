@@ -1,0 +1,12 @@
+# West Africa WAF lane: single dry FAK grid, D2/D4/D5 map positionally to
+# OPUS rate slots 20/40/40HC. No reefer column in this raw sheet - every
+# DR row also files an identical D/DG duplicate at the same rate (see
+# waf.py), confirmed against reference/2_OPUS/9_West Africa WAF and
+# 10_West Africa WAF (100% consistent across both weekly ground-truth
+# files: same rate, only CGO TYPE and commodity group flip DR->DG).
+prefix: D
+cgo_type: DR
+containers:
+  D2: "20"
+  D4: "40"
+  D5: "40hc"

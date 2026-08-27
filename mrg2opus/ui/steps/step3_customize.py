@@ -126,6 +126,25 @@ def render(state: WizardState) -> None:
         ),
     )
 
+    col_rfa_eff, col_rfa_exp = st.columns(2)
+    with col_rfa_eff:
+        rfa_effective_date = st.date_input(
+            "RFA effective date (optional)",
+            value=state.profile.rfa_effective_date,
+            help=(
+                "Each individual charge code's own CMDT NOTE Application Effective date normally just mirrors "
+                "this filing's rate validity start - but the real-world RFA (Rate Filing Agreement) window is "
+                "usually a separate, longer-lived date a human filer enters instead. Leave blank to keep using "
+                "the rate validity start."
+            ),
+        )
+    with col_rfa_exp:
+        rfa_expiry_date = st.date_input(
+            "RFA expiry date (optional)",
+            value=state.profile.rfa_expiry_date,
+            help="Same idea as RFA effective date, for Application Expires. Leave blank to keep using the rate validity end.",
+        )
+
     st.markdown("#### Skip output sheets")
     sheet_names = _output_sheet_names(state.row_sets)
     skip_choices: dict[str, bool] = {}
@@ -189,6 +208,8 @@ def render(state: WizardState) -> None:
                     "skip_output_sheets": skip_output_sheets,
                     "skip_dg_generation": skip_dg_generation,
                     "excluded_charge_codes": excluded_charge_codes,
+                    "rfa_effective_date": rfa_effective_date,
+                    "rfa_expiry_date": rfa_expiry_date,
                 }
             )
 

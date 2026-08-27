@@ -264,6 +264,8 @@ class SAFParser(BaseMRGParser):
             data.validity_end,
             data.included_charge_codes,
             excluded_codes=frozenset(config.excluded_charge_codes),
+            rfa_effective=config.rfa_effective_date,
+            rfa_expiry=config.rfa_expiry_date,
         )
 
         return OpusRowSet(rates=rates, rates_port_port=rates_port_port, cmdt_notes=cmdt_notes)

@@ -732,6 +732,8 @@ class LAWCParser(BaseMRGParser):
             sequential_charge_seq=True,
             charge_code_names_override=CHARGE_CODE_NAMES_OVERRIDE,
             excluded_codes=frozenset(config.excluded_charge_codes),
+            rfa_effective=config.rfa_effective_date,
+            rfa_expiry=config.rfa_expiry_date,
         )
         for row in rates:
             row.commodity_note = note_text_by_description.get(row.commodity_group_description)

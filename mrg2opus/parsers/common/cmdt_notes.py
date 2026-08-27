@@ -34,6 +34,8 @@ def build_cmdt_notes(
     sort_text_names: bool = True,
     charge_code_names_override: dict[str, str] | None = None,
     excluded_codes: frozenset[str] = frozenset(),
+    rfa_effective: date | None = None,
+    rfa_expiry: date | None = None,
 ) -> list[CmdtNoteRow]:
     """sequential_charge_seq: SAF's ground truth leaves child rows' Charge Seq
     blank (only the parent gets 1); EAF's numbers every row 1, 2, 3, ...
@@ -51,7 +53,17 @@ def build_cmdt_notes(
     entirely (see MappingProfile.excluded_charge_codes) - e.g. a Hong Kong
     account excluding BAF because it duplicates OBS and isn't applicable
     for their RFAs. Applied before anything else so an excluded code never
-    appears in the "inclusive of" text or gets its own child row."""
+    appears in the "inclusive of" text or gets its own child row.
+    rfa_effective/rfa_expiry: user-directed, filing-wide override for each
+    CHILD row's own Application Effective/Expires dates (see
+    MappingProfile.rfa_effective_date/rfa_expiry_date) - a charge code's
+    real-world RFA (Rate Filing Agreement) window is usually a separate,
+    longer-lived date pair a human filer enters, not the weekly rate
+    validity window every child row defaults to below. The PARENT (APP)
+    row always keeps the weekly validity window regardless - only
+    children are affected. Either left None falls back to
+    validity_start/validity_end for that one bound, same as before this
+    parameter existed."""
     if excluded_codes:
         included_codes = [c for c in included_codes if c not in excluded_codes]
     if not included_codes or validity_start is None or validity_end is None:
@@ -83,12 +95,14 @@ def build_cmdt_notes(
         application_expires=validity_end,
         application="S",
     )
+    child_effective = rfa_effective if rfa_effective is not None else validity_start
+    child_expires = rfa_expiry if rfa_expiry is not None else validity_end
     children = [
         CmdtNoteRow(
             charge_seq=(i + 2) if sequential_charge_seq else None,
             code=code,
-            application_effective=validity_start,
-            application_expires=validity_end,
+            application_effective=child_effective,
+            application_expires=child_expires,
             application="I",
         )
         for i, code in enumerate(included_codes)

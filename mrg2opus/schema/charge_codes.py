@@ -17,6 +17,9 @@ CHARGE_CODE_NAMES: dict[str, str] = {
     "THL": "TERMINAL HANDLING CHARGE (L)",  # confirmed against CSE ground truth
     "CSS": "CARRIER SECURITY SURCHARGE",
     "SLF": "SEAL FEE",
+    "CGD": "CONGESTION SURCHARGE (D)",  # confirmed against West Africa WAF ground truth
+    # 3 literal spaces between PAYMENT/HANDLING, verbatim from ground truth text.
+    "EPH": "ELSEWHERE PAYMENT   HANDLING FEE",
 }
 
 # Codes confirmed (against ground truth) to become their own CMDT NOTE child
@@ -34,5 +37,5 @@ CHARGE_CODE_NAMES: dict[str, str] = {
 # that human-only SOP exclusion. Confirmed via reference/2_OPUS/7_EAF-KEMBA
 # and 8_EAF-KEMBA, both of which do include it.
 INDIVIDUAL_CHARGE_CODES: frozenset[str] = frozenset(
-    {"BAF", "EFS", "MBS", "OBS", "HEA", "LSF", "PSS", "THL", "CSS", "SLF"}
+    {"BAF", "EFS", "MBS", "OBS", "HEA", "LSF", "PSS", "THL", "CSS", "SLF", "CGD", "EPH"}
 )

@@ -131,6 +131,18 @@ whole filing, every commodity group, dropping the listed code(s) from
 both the CMDT NOTE's "inclusive of" text and its own child row. Empty
 (the default) reproduces the MRG as-is. See `MappingProfile.excluded_charge_codes`.
 
+**Overriding CMDT NOTE child rows' RFA effective/expiry dates.** Each
+individual charge code's CMDT NOTE child row normally mirrors the
+filing's own weekly rate validity window - but real filings often need
+the charge code's own RFA (Rate Filing Agreement) window instead, a
+separate date pair a human filer enters per account (often much longer-
+lived than one week). Step 3's **Special instructions** section has two
+optional date pickers, "RFA effective date" and "RFA expiry date" -
+applies to the whole filing, every commodity group's child rows; the
+parent (`APP`) row is never affected. Either left blank falls back to
+the weekly rate validity for that one bound, same as before this feature
+existed. See `MappingProfile.rfa_effective_date`/`rfa_expiry_date`.
+
 **Default commodity group codes are sequential.** Every distinct
 commodity group gets its own unique code (G0001, G0002, G0003, ...) out
 of the box, in the order groups are first encountered while parsing -

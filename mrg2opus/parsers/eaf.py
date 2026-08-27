@@ -160,6 +160,8 @@ class EAFParser(BaseMRGParser):
             data.included_charge_codes,
             sequential_charge_seq=True,
             excluded_codes=frozenset(config.excluded_charge_codes),
+            rfa_effective=config.rfa_effective_date,
+            rfa_expiry=config.rfa_expiry_date,
         )
         dr_rows: list[RatesRow] = []
         dg_rows: list[RatesRow] = []
