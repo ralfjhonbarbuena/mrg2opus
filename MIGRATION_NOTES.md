@@ -68,8 +68,9 @@ streamlit, PyYAML, platformdirs, python-dateutil, pytest).
 | **LAEC** | ✅ Done, near-exact (documented gaps) | Same shape as CSE but doubled: every sheet splits into Non-ISC/ISC sections. "R5 NOR" now defaults to its own commodity description (see §3.6). | 4/4 pass |
 | **LAWC** | ✅ Done, exact match | 4 Dry-shaped grids (main/SEA/ISC/OOG) + Reefer + NOR sheets, each its own commodity group. OOG has 4 equipment-type column-pairs mapping to Prefix O/F twins or F-only. RATES PORT-PORT uses a completely different commodity code namespace than RATES for the same data. Reefer/NOR now default to their own commodity descriptions (see §3.6). | 4/4 pass |
 | **WAF** | ✅ Done, exact match | Single raw sheet, 9-POD x 3-container grid over ~41 fixed origins. RATES + CMDT NOTE only (no ARBS/SPECIAL NOTE/RN). D/DR rows each also file an identical D/DG duplicate under their own commodity group (see §3.19). | 6/6 pass |
+| **AUEC** | ✅ Done, exact match (FAK only) | 3 raw sheets sharing one 48-origin grid, 2 commodity groups (main + NZJ). RATES + CMDT NOTE only. Adds RAD ("Reefer As Dry") container type, rail-routing transmode, PRDA/PRDB footnote-expanded regional groups, and per-charge-code POL scoping on CMDT NOTE children (see §3.21). TIER 1 variant not yet verified. | 7/7 pass |
 
-Full test suite: **93/93 passing** (`./.venv/Scripts/python.exe -m pytest tests/ -v`, ~2 min) - see §3.15 for the 2026-08-26 rebuild onto `reference/` ground truth (SAF has no golden tests anymore; `test_compare_engine_regression.py`/`golden.py`/`conftest.py` were removed as redundant/dead), §3.16 for the `excluded_charge_codes` feature added the same day (`test_cmdt_notes.py` + 1 EAF end-to-end test), §3.17 for sequential default commodity codes (`test_commodity_utils.py`), §3.18 for the CSE 2-file merge fix (4 new `test_excel_io_merge.py` tests + CSE's own golden tests now cover the full 2-file merge), §3.19 for the new West Africa WAF lane (`test_parsers_waf.py`, 7 tests), and §3.20 for the RFA effective/expiry date override (4 new `test_cmdt_notes.py` cases).
+Full test suite: **100/100 passing** (`./.venv/Scripts/python.exe -m pytest tests/ -v`, ~2 min) - see §3.15 for the 2026-08-26 rebuild onto `reference/` ground truth (SAF has no golden tests anymore; `test_compare_engine_regression.py`/`golden.py`/`conftest.py` were removed as redundant/dead), §3.16 for the `excluded_charge_codes` feature added the same day (`test_cmdt_notes.py` + 1 EAF end-to-end test), §3.17 for sequential default commodity codes (`test_commodity_utils.py`), §3.18 for the CSE 2-file merge fix (4 new `test_excel_io_merge.py` tests + CSE's own golden tests now cover the full 2-file merge), §3.19 for the new West Africa WAF lane (`test_parsers_waf.py`, 7 tests), §3.20 for the RFA effective/expiry date override (4 new `test_cmdt_notes.py` cases), and §3.21 for the new AUS NEA to AUEC FAK lane (`test_parsers_auec.py`, 7 tests).
 
 ## 3.5 Phase 2 — Streamlit wizard UI
 
@@ -1118,6 +1119,99 @@ as §3.16's `excluded_charge_codes`, not per commodity group).
   the browser: both date pickers render, accept input, and the filing
   completes through Export with no error.
 
+## 3.21 New lane: AUS NEA to AUEC FAK
+
+Second brand-new lane, chosen from the same re-scan that found WAF -
+three of the completed-but-unbuilt families shared WAF's "grid over
+Asia/SEA origins" shape (see project-mrg-lane-scope memory); this one
+turned out structurally richer than WAF in several ways.
+
+- Three raw sheets, one shared 48-origin grid layout (same origins, same
+  row range, same footnote city-group definitions) but different
+  destinations: `ex NEA to AUBNE_AUMEL` (Brisbane/Melbourne, one combined
+  POD) and `ex NEA to AUSYD` (Sydney) both feed ONE commodity group
+  ("EX NEA TO AUEC") - confirmed sharing a single CMDT NOTE block in
+  ground truth; `ex NEA to AUBNE on NZJ` (Brisbane via a different vessel
+  operator) is a wholly separate SECOND commodity group ("EX NEA TO
+  AUBNE ON NZJ"). Output scope is RATES + CMDT NOTE only (ground truth's
+  own sheet is named "SUR" - the known naming drift).
+- **New parser: `mrg2opus/parsers/auec.py`.** Origin resolution again
+  needed almost no new Location Bank entries - of 48 origins, only 3
+  new manual_override records (Guiyang->CNKWE, Shidao->CNSHD,
+  Mawei->CNMAW) plus 2 defensive aliases for "Taizhou,  Jiangsu" (double
+  space) pointing at the already-known CNTZO, needed because a bare
+  comma-split would wrongly treat "Taizhou" and "Jiangsu" as two separate
+  locations - `auec.py` now tries the whole (unsplit) origin text as one
+  token FIRST, falling back to the normal comma-split multi-match only
+  if that fails, specifically to handle this "City, Province" format.
+- **New per-lane concepts not seen in any prior lane:**
+  - A container type genuinely new to this project: "RAD" ("Reefer As
+    Dry") - a physically reefer container filed as Prefix R, CGO TYPE
+    DR (not RF), using the same 20'/40'HC-only rate shape as the RF
+    (real reefer) columns. Confirmed via the raw sheet's own remark,
+    "*not accepting DG in Reefer" - RAD rows never get a DG duplicate.
+  - A rail-routed origin distinction: "Chengdu (via CNYTN by rail)" sets
+    `origin_transmode="Rail"` (NOT `origin_term`, which stays "CY"
+    either way) - only the literal "by rail" text triggers it; a plain
+    "(via CNSHA)" without "by rail" just sets O.Via and leaves
+    transmode blank. Easy to get backwards (did, initially - caught by
+    the ground-truth diff).
+  - Two named regional groupings, "PRDA*"/"PRDB*", that expand to 19
+    Pearl-River-Delta cities each via a footnote definition elsewhere in
+    the same raw sheet (rows 56-57) rather than being written out
+    inline. Several of those 38 individual city names (e.g. "Longhua",
+    "Sihui (Mafang)") are new enough, and ambiguous enough, that a fuzzy
+    match mis-resolved some of them to unrelated existing codes with
+    a real risk of silently wrong freight rates - `auec.py` hardcodes
+    both groups' full code/description strings instead, copied verbatim
+    from ground truth (confirmed byte-identical between both reference
+    weeks, a stable standing grouping) rather than resolved per-city.
+  - A per-charge-code POL (origin country) scope on CMDT NOTE child
+    rows: ISL is only included for Taiwan-origin shipments; EFS is filed
+    as TWO separate child rows scoped to Hong Kong and Korea
+    respectively (both genuinely present, not a duplicate-row bug - same
+    category as CSE's real duplicate THL row). None of this is
+    recoverable from the raw sheet's own "Rate incl OBS, EFS (ex KR &
+    HK), PSS, subject to ISL/..." remark text (which actually lists ISL
+    under "subject to", not "incl") - the whole charge/POL list is
+    hardcoded (`auec.py::INCLUDED_CHARGES`), verified against both real
+    weeks. Needed a lane-specific CMDT NOTE builder
+    (`auec.py::_build_group_cmdt_notes`) rather than the shared
+    `cmdt_notes.py::build_cmdt_notes` helper, which has no notion of a
+    per-child-row POL.
+  - Route Seq. is a single running counter across the WHOLE commodity
+    group - not just per destination (as WAF's own equivalent finding
+    was), but across every destination AND container-type
+    (DR/RF/RAD-DR/DG) block within that group, restarting at 1 only for
+    the next commodity group.
+  - Unlike WAF, the D/DG duplicate row stays under the SAME commodity
+    group code/description as its D/DR parent (no "- DG" suffix split)
+    - confirmed directly from ground truth; the two lanes genuinely
+    differ here, not a WAF pattern to blindly reapply.
+- One new charge code discovered and added to `schema/charge_codes.py`:
+  `ISL` ("INTERNATIONAL SECURITY FEE AT LOCAL").
+- Sheet-name-based detection needed to be specific (`ex NEA to
+  AUBNE_AUMEL` / `ex NEA to AUSYD` / `ex NEA to AUBNE on NZJ` exactly)
+  since the sibling, still-unbuilt "AUS NEA to AUWC" lane shares the
+  identical raw template with different destination sheet names (`ex NEA
+  to AUFRE` / `ex NEA to AUADL`) - confirmed 100% classification
+  confidence with zero ambiguity in `test_registry.py`.
+- New `tests/test_parsers_auec.py` (7 tests): both real weekly pairs, **0
+  missing, 0 extra, 0 field mismatches** against all 348 real
+  ground-truth RATES rows each week; CMDT NOTE content match including
+  the POL scoping; a dedicated route_seq-continuity test; and
+  `excluded_charge_codes`/`skip_dg_generation` end-to-end coverage
+  (confirming skip_dg_generation is correctly scoped per commodity group
+  - suppressing the main group's DG rows leaves the separate NZJ group's
+  DG rows untouched).
+- Verified live in the browser: full 4-step wizard (upload -> 100%-
+  confidence classify -> 348-row preview -> customize -> export screen)
+  end to end on a real reference file.
+- Not yet verified: the sibling "AUS NEA to AUEC TIER 1" reference pair
+  (folders 39/40) - same 3 sheets plus an extra "Tier 1 list" sheet this
+  parser already ignores harmlessly, so it likely just works, but this
+  wasn't explicitly checked.
+
 ## 5. Files touched this session (everything above is new)
 
 Nothing pre-existed before this session — the whole `mrg2opus/` package,
@@ -1229,7 +1323,7 @@ cd "C:\Users\romsae-desktop\claude\PROCESS INNOVATION HACKATHON"
 ./.venv/Scripts/python.exe -m pytest tests/ -v
 ```
 
-Should show 93 passed. If not, something regressed since this note was
+Should show 100 passed. If not, something regressed since this note was
 written — bisect before building on top of it.
 
 To check the UI itself is still working end-to-end, run
