@@ -69,8 +69,9 @@ streamlit, PyYAML, platformdirs, python-dateutil, pytest).
 | **LAWC** | ✅ Done, exact match | 4 Dry-shaped grids (main/SEA/ISC/OOG) + Reefer + NOR sheets, each its own commodity group. OOG has 4 equipment-type column-pairs mapping to Prefix O/F twins or F-only. RATES PORT-PORT uses a completely different commodity code namespace than RATES for the same data. Reefer/NOR now default to their own commodity descriptions (see §3.6). | 4/4 pass |
 | **WAF** | ✅ Done, exact match | Single raw sheet, 9-POD x 3-container grid over ~41 fixed origins. RATES + CMDT NOTE only (no ARBS/SPECIAL NOTE/RN). D/DR rows each also file an identical D/DG duplicate under their own commodity group (see §3.19). | 6/6 pass |
 | **AUEC** | ✅ Done, exact match (FAK only) | 3 raw sheets sharing one 48-origin grid, 2 commodity groups (main + NZJ). RATES + CMDT NOTE only. Adds RAD ("Reefer As Dry") container type, rail-routing transmode, PRDA/PRDB footnote-expanded regional groups, and per-charge-code POL scoping on CMDT NOTE children (see §3.21). TIER 1 variant not yet verified. | 7/7 pass |
+| **AUWC** | ✅ Done, exact match (FAK only) | 2 raw sheets sharing one 49-origin grid (same PRDA/PRDB groups as AUEC). 3 commodity groups (main, RF, NOR each separate - unlike AUEC's folded-in RF/RAD). Same charge/duplicate-EFS list as AUEC but scoped on POR, not POL (see §3.22). TIER 1 variant not yet verified. | 8/8 pass |
 
-Full test suite: **100/100 passing** (`./.venv/Scripts/python.exe -m pytest tests/ -v`, ~2 min) - see §3.15 for the 2026-08-26 rebuild onto `reference/` ground truth (SAF has no golden tests anymore; `test_compare_engine_regression.py`/`golden.py`/`conftest.py` were removed as redundant/dead), §3.16 for the `excluded_charge_codes` feature added the same day (`test_cmdt_notes.py` + 1 EAF end-to-end test), §3.17 for sequential default commodity codes (`test_commodity_utils.py`), §3.18 for the CSE 2-file merge fix (4 new `test_excel_io_merge.py` tests + CSE's own golden tests now cover the full 2-file merge), §3.19 for the new West Africa WAF lane (`test_parsers_waf.py`, 7 tests), §3.20 for the RFA effective/expiry date override (4 new `test_cmdt_notes.py` cases), and §3.21 for the new AUS NEA to AUEC FAK lane (`test_parsers_auec.py`, 7 tests).
+Full test suite: **108/108 passing** (`./.venv/Scripts/python.exe -m pytest tests/ -v`, ~2 min) - see §3.15 for the 2026-08-26 rebuild onto `reference/` ground truth (SAF has no golden tests anymore; `test_compare_engine_regression.py`/`golden.py`/`conftest.py` were removed as redundant/dead), §3.16 for the `excluded_charge_codes` feature added the same day (`test_cmdt_notes.py` + 1 EAF end-to-end test), §3.17 for sequential default commodity codes (`test_commodity_utils.py`), §3.18 for the CSE 2-file merge fix (4 new `test_excel_io_merge.py` tests + CSE's own golden tests now cover the full 2-file merge), §3.19 for the new West Africa WAF lane (`test_parsers_waf.py`, 7 tests), §3.20 for the RFA effective/expiry date override (4 new `test_cmdt_notes.py` cases), §3.21 for the new AUS NEA to AUEC FAK lane (`test_parsers_auec.py`, 7 tests), and §3.22 for the new AUS NEA to AUWC FAK lane (`test_parsers_auwc.py`, 8 tests).
 
 ## 3.5 Phase 2 — Streamlit wizard UI
 
@@ -1212,6 +1213,95 @@ turned out structurally richer than WAF in several ways.
   parser already ignores harmlessly, so it likely just works, but this
   wasn't explicitly checked.
 
+## 3.22 New lane: AUS NEA to AUWC FAK
+
+Third brand-new lane this session, deliberately NOT assumed to be
+AUEC-identical despite sharing the "AUS NEA to Aus-coast" family name -
+per [[project_mrg2opus_auec_lane]]'s own warning, it wasn't. Verified
+against both real reference weeks: 0 missing/0 extra/0 mismatched rows
+across all 248 RATES rows each week, plus exact CMDT NOTE parity.
+Verified live in the browser end to end.
+
+- Two raw sheets, "ex NEA to AUFRE" (Fremantle) and "ex NEA to AUADL "
+  (Adelaide), sharing the same 49-origin grid and PRDA/PRDB footnote
+  definitions AUEC uses - byte-identical, so `auwc.py` imports
+  `PRDA_CODE`/`PRDA_DESCRIPTION`/`PRDB_CODE`/`PRDB_DESCRIPTION` straight
+  from `auec.py` rather than re-transcribing them. Both destinations
+  share ONE main commodity group (confirmed one CMDT NOTE block),
+  matching AUEC's AUBNE_AUMEL+AUSYD pattern.
+- **New parser: `mrg2opus/parsers/auwc.py`.** All 49 origins resolved
+  via the existing Location Bank with ZERO new entries needed - the 4
+  manual_override records added during the AUEC build (Guiyang, Shidao,
+  Mawei, the Taizhou-Jiangsu alias) already covered this lane's overlap.
+- **Two ways this lane genuinely differs from AUEC - confirmed via
+  ground truth, not assumed:**
+  - Reefer (RF) and "NOR" (Non-Operating Reefer - AUEC's equivalent
+    container type is named "RAD", same concept: physically a reefer
+    container filed as Prefix R / CGO TYPE DR) each get their OWN
+    SEPARATE commodity group here (`FAK - NEA to AUWC (RF)` / `(NOR)`),
+    not folded into the main group the way AUEC's RF/RAD are. 3 distinct
+    CMDT Seq blocks in ground truth, not 2. NOR only ever populates the
+    20' rate slot in this lane's raw sheet (its own "40'HC NOR" column
+    is always blank) - not a bug, just this container type's data shape
+    here, unlike AUEC's RAD which populates both 20'/40'HC.
+  - CMDT NOTE child rows DO carry a per-code origin scope (ISL only for
+    Taiwan; EFS filed as two separate rows, here scoped to Korea and
+    Hong Kong respectively) - same hardcoded charge list and same
+    business meaning as AUEC's POL scoping, but this lane stamps it on
+    the **POR** column instead of POL (confirmed: every POL cell here is
+    blank). Needed the same kind of lane-specific CMDT NOTE builder
+    AUEC's did (`auwc.py::_build_group_cmdt_notes`), just targeting a
+    different OPUS field - this was caught by the ground-truth diff on
+    the FIRST attempt (reused a plain, non-scoped charge list expecting
+    AUEC's shared-helper path to just work), a reminder that "no per-code
+    scoping" and "different scoping field" both present as the SAME
+    "POL always blank" signal until you check the neighboring POR/PO*
+    columns too.
+  - Route Seq. resets to 1 for each of the 3 commodity groups
+    independently (DG continues the main group's own counter, same
+    "one continuous counter per commodity group" rule as AUEC) - this
+    one DID match the established pattern.
+- No new charge codes needed (OBS/ISL/EFS/PSS all already known from
+  AUEC).
+- Sheet-name detection (`ex NEA to AUFRE` / `ex NEA to AUADL`) is
+  already fully distinct from every sibling AU/NZ lane's own sheet
+  names - confirmed 100% classification confidence with zero ambiguity
+  in `test_registry.py`.
+- New `tests/test_parsers_auwc.py` (8 tests): both real weekly pairs, **0
+  missing, 0 extra, 0 field mismatches** against all 248 real
+  ground-truth RATES rows each week; CMDT NOTE content match including
+  the POR scoping; a route_seq-per-group test; a 3-distinct-groups test;
+  and `excluded_charge_codes`/`skip_dg_generation` end-to-end coverage.
+- Not yet checked: the sibling "AUS NEA to AUWC TIER 1" reference pair
+  (folders 35/36).
+
+## 3.23 Charge-code names: imported the TAD tool's 586-code lookup table
+
+At the user's request, went through `reference/Tool_for_TAD_DirectExport.bas`
+and the live `reference/Tool for TAD.xlsm` to understand the team's
+in-house VBA export engine before eventually building the TAD FILING
+parser (full writeup: see the `project_tad_vba_tool_analysis` memory).
+One concrete outcome landed in code now, independent of the TAD build
+itself:
+
+- The workbook's `Sheet1` turned out to be a 586-row (575 unique)
+  charge-code -> full-name lookup table - the VBA tool's own equivalent
+  of `schema/charge_codes.py::CHARGE_CODE_NAMES`, and far more complete
+  than this project's hand-built 13-entry version. User approved
+  importing it wholesale as `_TAD_TOOL_CHARGE_CODE_NAMES`, merged so the
+  13 already ground-truth-confirmed entries always win on overlap (the
+  one real conflict, `HEA`, kept this project's confirmed "HEAVY WEIGHT
+  SURCHARGE" over the TAD sheet's "HEAVY SURCHARGE"). `CHARGE_CODE_NAMES`
+  now has 575 entries total.
+- `INDIVIDUAL_CHARGE_CODES` (the narrower whitelist gating which codes
+  auto-qualify for a raw-text-parsed "Includes" line) was deliberately
+  **NOT** expanded to match - unchanged at 13. A code having a name
+  available now doesn't mean it should auto-generate a CMDT NOTE child
+  row for any lane; that whitelist still only grows per-lane, per-
+  ground-truth-confirmation, same rule as before.
+- Confirmed via full test suite (108/108 unchanged) that this is a
+  pure addition with no regressions.
+
 ## 5. Files touched this session (everything above is new)
 
 Nothing pre-existed before this session — the whole `mrg2opus/` package,
@@ -1323,7 +1413,7 @@ cd "C:\Users\romsae-desktop\claude\PROCESS INNOVATION HACKATHON"
 ./.venv/Scripts/python.exe -m pytest tests/ -v
 ```
 
-Should show 100 passed. If not, something regressed since this note was
+Should show 108 passed. If not, something regressed since this note was
 written — bisect before building on top of it.
 
 To check the UI itself is still working end-to-end, run
