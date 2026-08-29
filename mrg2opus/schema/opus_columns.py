@@ -172,6 +172,43 @@ RN_ROW_FIELDS = [
     "direct_call", "bar_type", "s_i", "mty_pickup_cy", "mty_return_cy", "premium",
 ]
 
+# --- FREETIME: 2-row header, 46 columns --------------------------------------
+# Verified directly against reference/2_OPUS/15_LAWC FAK's and 19_LAEC FAK's
+# real "FREETIME" sheets - a per-lane STATIC reference table (RFA/tariff
+# free-time-allowance schedule) that is not derived from the raw MRG at all
+# (confirmed byte-identical across every LAWC ground truth sample seen, and
+# identical-apart-from-EFF/EXP-DT across every LAEC one) - see
+# parsers/common/freetime.py for the concrete per-lane tables.
+FREETIME_HEADER_GROUP = [
+    "Seq.", "RFA No.", "Status", "Tariff", "EFF DT", "EXP DT", "CNTR/Cargo", "IMDG\nClass", "PSA Grp.",
+    "Coverage", "Coverage", "Coverage", "Free Time", "Free Time", "Free Time",
+    "F/Time EXCL", "F/Time EXCL", "F/Time EXCL",
+    "Origin(I) or Dest.(O)", "Origin(I) or Dest.(O)", "Origin(I) or Dest.(O)", "Origin(I) or Dest.(O)",
+    "BKG DEL(I) or POR(O)", "BKG DEL(I) or POR(O)", "BKG DEL(I) or POR(O)",
+    "Actual Customer", "Actual Customer", "Commodity", "Commodity", "Curr",
+    "Over Day", "Over Day", "Rate per Day", "Rate per Day", "Rate per Day", "Rate per Day",
+    "CNTR Q'TY", "CNTR Q'TY", "Tiered\n Free\n Time", "Remark",
+    "DAR No.", "Ver.", "Approval No.", "Proposal No.", "Customer", "Customer",
+]
+FREETIME_HEADER_FIELD = [
+    None, None, None, None, None, None, None, None, None,
+    "CN", "RGN", "LOC", "Tier", "Add", "Total", "SAT", "SUN", "H/day",
+    "CT", "CN", "RGN", "LOC", "CN", "RGN", "LOC", "Code", "Name", "Code", "Name", None,
+    "From", "Up to", "20 FT", "40 FT", "H/C", "45 FT",
+    "From", "Up to", None, None, None, None, None, None, "Code", "Name",
+]
+FREETIME_ROW_FIELDS = [
+    "seq", "rfa_no", "status", "tariff", "eff_dt", "exp_dt", "cntr_cargo", "imdg_class", "psa_grp",
+    "coverage_cn", "coverage_rgn", "coverage_loc", "free_time_tier", "free_time_add", "free_time_total",
+    "ftime_excl_sat", "ftime_excl_sun", "ftime_excl_hday",
+    "origin_or_dest_ct", "origin_or_dest_cn", "origin_or_dest_rgn", "origin_or_dest_loc",
+    "bkg_del_cn", "bkg_del_rgn", "bkg_del_loc",
+    "actual_customer_code", "actual_customer_name", "commodity_code", "commodity_name", "curr",
+    "over_day_from", "over_day_upto", "rate_per_day_20", "rate_per_day_40", "rate_per_day_hc", "rate_per_day_45",
+    "cntr_qty_from", "cntr_qty_upto", "tiered_free_time", "remark",
+    "dar_no", "ver", "approval_no", "proposal_no", "customer_code", "customer_name",
+]
+
 # --- Legacy bundled-sample sheet names ---------------------------------------
 # These match the literal sheet names inside the older, hand-prepared
 # "Sample MRGs with OPUS FORMATS/*.xlsx" fixtures every tests/test_parsers_*.py

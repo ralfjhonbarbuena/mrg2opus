@@ -181,6 +181,66 @@ def build_vertical_rates(row_set: "OpusRowSet") -> "OpusRowSet":
     return row_set.model_copy(update={"vertical_rates": vertical})
 
 
+class FreetimeRow(BaseModel):
+    """A lane's static free-time-allowance/RFA reference table (real sheet
+    name "FREETIME", sometimes filed as "FREETIME(NEEDS IMPROVEMENT)" - a
+    filer's own WIP marker, not a naming variant to match on). Confirmed
+    (LAWC: 3 ground-truth files; LAEC: 6) NOT derived from the raw MRG's
+    rate data at all - every column is a static per-lane constant EXCEPT
+    eff_dt/exp_dt, which for LAEC tracks that filing's own validity window
+    (LAWC's stays a fixed constant even there - see
+    parsers/common/freetime.py for the concrete per-lane tables and which
+    behavior each lane uses)."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    seq: Optional[int] = None
+    rfa_no: Optional[str] = None
+    status: Optional[str] = None
+    tariff: Optional[str] = None
+    eff_dt: Optional[date] = None
+    exp_dt: Optional[date] = None
+    cntr_cargo: Optional[str] = None
+    imdg_class: Optional[str] = None
+    psa_grp: Optional[str] = None
+    coverage_cn: Optional[str] = None
+    coverage_rgn: Optional[str] = None
+    coverage_loc: Optional[str] = None
+    free_time_tier: Optional[str] = None
+    free_time_add: Optional[str] = None
+    free_time_total: Optional[Decimal] = None
+    ftime_excl_sat: Optional[str] = None
+    ftime_excl_sun: Optional[str] = None
+    ftime_excl_hday: Optional[str] = None
+    origin_or_dest_ct: Optional[str] = None
+    origin_or_dest_cn: Optional[str] = None
+    origin_or_dest_rgn: Optional[str] = None
+    origin_or_dest_loc: Optional[str] = None
+    bkg_del_cn: Optional[str] = None
+    bkg_del_rgn: Optional[str] = None
+    bkg_del_loc: Optional[str] = None
+    actual_customer_code: Optional[str] = None
+    actual_customer_name: Optional[str] = None
+    commodity_code: Optional[str] = None
+    commodity_name: Optional[str] = None
+    curr: Optional[str] = None
+    over_day_from: Optional[str] = None
+    over_day_upto: Optional[str] = None
+    rate_per_day_20: Optional[Decimal] = None
+    rate_per_day_40: Optional[Decimal] = None
+    rate_per_day_hc: Optional[Decimal] = None
+    rate_per_day_45: Optional[Decimal] = None
+    cntr_qty_from: Optional[str] = None
+    cntr_qty_upto: Optional[str] = None
+    tiered_free_time: Optional[str] = None
+    remark: Optional[str] = None
+    dar_no: Optional[str] = None
+    ver: Optional[str] = None
+    approval_no: Optional[str] = None
+    proposal_no: Optional[str] = None
+    customer_code: Optional[str] = None
+    customer_name: Optional[str] = None
+
+
 class ArbsRow(BaseModel):
     """Field names/order verified directly against CSE.xlsx's OPUS ARBS
     ground truth (the Phase-1 placeholder schema was wrong - e.g. Proposal/
@@ -298,6 +358,7 @@ class OpusRowSet(BaseModel):
     cmdt_notes: list[CmdtNoteRow] = []
     special_notes: list[SpecialNoteRow] = []
     route_notes: list[RouteNoteRow] = []
+    freetime: list[FreetimeRow] = []
     # Populated only when MappingProfile.include_vertical_rates is set -
     # see build_vertical_rates() above. Empty by default for every lane.
     vertical_rates: list[VerticalRatesRow] = []

@@ -5,7 +5,7 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from mrg2opus.audit.compare import diff_by_key, rates_row_key, read_rates_sheet
+from mrg2opus.audit.compare import _normalize, diff_by_key, rates_row_key, read_rates_sheet
 from mrg2opus.parsers.lawc import COMMODITY_MAIN, LAWCParser
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema import opus_columns as cols
@@ -163,3 +163,62 @@ def test_lawc_skip_dg_generation_suppresses_dg_rows_for_one_group_only():
     assert "DG" in isc_cgo_types  # untouched - only the main dry grid was opted out
 
     assert len(row_set.rates) < len(default_row_set.rates)
+
+
+def _find_freetime_sheet(wb):
+    for name in wb.sheetnames:
+        if "FREETIME" in name.upper():
+            return wb[name]
+    raise KeyError(f"no FREETIME sheet in {wb.sheetnames}")
+
+
+def _norm(v):
+    v = _normalize(v)
+    return None if v == "" else v
+
+
+# All 4 real ground-truth files (2 FAK weeks + 2 TIER 1 weeks) - confirmed
+# byte-identical FREETIME content across every one, unlike LAEC's (see
+# parsers/common/freetime.py::build_lawc_freetime's docstring).
+_FREETIME_PAIRS = [
+    (
+        REFERENCE_DIR / "1_MRGs" / "15_LAWC FAK" / "20260812_MRG guideline template China_HKG_SIN_TWN_KR (15-21 Aug) and SEA ISC (15-31 Aug)_FAK (1).xlsx",
+        REFERENCE_DIR / "2_OPUS" / "15_LAWC FAK" / "LWE ( 20260815 - 20260821 ).xlsx",
+    ),
+    (
+        REFERENCE_DIR / "1_MRGs" / "16_LAWC FAK" / "20260820_MRG guideline template China_HKG_SIN_TWN_KR (22-31 Aug) and SEA ISC (15-31 Aug)_FAK.xlsx",
+        REFERENCE_DIR / "2_OPUS" / "16_LAWC FAK" / "LWE ( 20260822 - 20260831 ).xlsx",
+    ),
+    (
+        REFERENCE_DIR / "1_MRGs" / "17_LAWC TIER 1" / "20260812_MRG guideline template China_HKG_SIN_TWN_KR (15-21 Aug) and SEA ISC (15-31 Aug)_T1.xlsx",
+        REFERENCE_DIR / "2_OPUS" / "17_LAWC TIER 1" / "LWE_OPUS 15 TO 21.xlsx",
+    ),
+    (
+        REFERENCE_DIR / "1_MRGs" / "18_LAWC TIER 1" / "20260820_MRG guideline template China_HKG_SIN_TWN_KR (22-31 Aug) and SEA ISC (15-31 Aug)_T1.xlsx",
+        REFERENCE_DIR / "2_OPUS" / "18_LAWC TIER 1" / "LWE_OPUS 22 TO 31.xlsx",
+    ),
+]
+
+
+@pytest.mark.parametrize("raw_path,opus_path", _FREETIME_PAIRS)
+def test_lawc_freetime_matches_ground_truth(raw_path, opus_path):
+    if not raw_path.exists() or not opus_path.exists():
+        pytest.skip("reference/ ground-truth files not present in this checkout")
+    wb = openpyxl.load_workbook(raw_path, data_only=True)
+    row_set = LAWCParser().run(wb, MappingProfile())
+    generated = [r.model_dump() for r in row_set.freetime]
+
+    gwb = openpyxl.load_workbook(opus_path, data_only=True)
+    ws = _find_freetime_sheet(gwb)
+    expected = []
+    for r in range(3, ws.max_row + 1):
+        values = [ws.cell(row=r, column=c).value for c in range(1, 47)]
+        if all(v is None for v in values):
+            continue
+        expected.append(dict(zip(cols.FREETIME_ROW_FIELDS, values)))
+
+    assert len(generated) == len(expected)
+    for i, (g, e) in enumerate(zip(generated, expected)):
+        for field_name in cols.FREETIME_ROW_FIELDS:
+            gv, ev = _norm(g.get(field_name)), _norm(e.get(field_name))
+            assert gv == ev, f"row {i} {field_name}: {gv!r} != {ev!r}"

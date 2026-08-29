@@ -52,6 +52,7 @@ from mrg2opus.parsers.common.commodity import (
 )
 from mrg2opus.parsers.common.container_map import ContainerMap, load_container_map
 from mrg2opus.parsers.common.exclusion import is_excluded, location_is_excluded
+from mrg2opus.parsers.common.freetime import build_lawc_freetime
 from mrg2opus.parsers.common.header_grid import flatten_pod_header
 from mrg2opus.parsers.common.ordering import group_by_destination
 from mrg2opus.parsers.registry import LayoutProfile, register
@@ -741,7 +742,8 @@ class LAWCParser(BaseMRGParser):
         route_notes = _derive_route_notes(rates, main_validity_start, main_validity_end)
 
         return OpusRowSet(
-            rates=rates, rates_port_port=rates_port_port, cmdt_notes=cmdt_notes, route_notes=route_notes
+            rates=rates, rates_port_port=rates_port_port, cmdt_notes=cmdt_notes, route_notes=route_notes,
+            freetime=build_lawc_freetime(),
         )
 
     def _build_rates_row(

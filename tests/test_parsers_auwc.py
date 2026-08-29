@@ -142,3 +142,56 @@ def test_auwc_skip_dg_generation_suppresses_dg_rows_for_main_group_only():
     assert "DR" in main_cgo
 
     assert len(row_set.rates) < len(default_row_set.rates)
+
+
+# AUWC TIER 1 - same parser, no code changes needed (confirmed: RATES and
+# CMDT NOTE both match ground truth exactly, unlike AUEC's own TIER 1 -
+# see test_parsers_auec.py's own TIER 1 test for that lane's gap).
+TIER1_PAIRS = [
+    (
+        REFERENCE_DIR / "1_MRGs" / "35_AUS NEA to AUWC TIER 1" / "ONE AU MRG 2026_0815 to 2026_0831- ex NEA to AUWC (07 August 2026) - Tier 1.xlsx",
+        REFERENCE_DIR / "2_OPUS" / "35_AUS NEA to AUWC TIER 1" / "AUWC TIER 1 15 TO 31.xlsx",
+    ),
+    (
+        REFERENCE_DIR / "1_MRGs" / "36_AUS NEA to AUWC TIER 1" / "ONE AU MRG 2026_0901 to 2026_0914- ex NEA to AUWC (25 August 2026) - Tier 1.xlsx",
+        REFERENCE_DIR / "2_OPUS" / "36_AUS NEA to AUWC TIER 1" / "AUWC TIER 1 1 TO 14.xlsx",
+    ),
+]
+
+
+@pytest.mark.parametrize("raw_path,opus_path", TIER1_PAIRS)
+def test_auwc_tier1_rates_matches_ground_truth(raw_path, opus_path):
+    if not raw_path.exists() or not opus_path.exists():
+        pytest.skip("reference/ ground-truth files not present in this checkout")
+    row_set = _run_auwc(raw_path)
+    generated = [r.model_dump() for r in row_set.rates]
+
+    ref_wb = openpyxl.load_workbook(opus_path, data_only=True, read_only=True)
+    expected = read_rates_sheet(ref_wb, "RATES")
+
+    result = diff_by_key(generated, expected, key_fn=rates_row_key, fields=cols.RATES_ROW_FIELDS, ignore_fields=RATES_IGNORE_FIELDS)
+    assert not result.missing, f"missing {len(result.missing)} expected rows, e.g. {list(result.missing)[:5]}"
+    assert not result.extra, f"{len(result.extra)} unexpected generated rows, e.g. {list(result.extra)[:5]}"
+    assert not result.field_mismatches, f"{len(result.field_mismatches)} field mismatches, e.g. {result.field_mismatches[:10]}"
+
+
+@pytest.mark.parametrize("raw_path,opus_path", TIER1_PAIRS)
+def test_auwc_tier1_cmdt_note_matches_ground_truth(raw_path, opus_path):
+    if not raw_path.exists() or not opus_path.exists():
+        pytest.skip("reference/ ground-truth files not present in this checkout")
+    row_set = _run_auwc(raw_path)
+    generated = [r.model_dump() for r in row_set.cmdt_notes]
+
+    ref_wb = openpyxl.load_workbook(opus_path, data_only=True, read_only=True)
+    expected = read_cmdt_note_sheet(ref_wb, "SRCHG")
+
+    assert len(generated) == len(expected)
+    ignore = {"header_seq", "note_seq"}
+    for i, (g, e) in enumerate(zip(generated, expected)):
+        for field_name in cols.CMDT_NOTE_ROW_FIELDS:
+            if field_name in ignore:
+                continue
+            if field_name in ("application_effective", "application_expires") and g.get("code") != "APP":
+                continue
+            gv, ev = _normalize(g.get(field_name)), _normalize(e.get(field_name))
+            assert gv == ev, f"row {i} {field_name}: {gv!r} != {ev!r}"

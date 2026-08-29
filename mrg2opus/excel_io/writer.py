@@ -13,6 +13,7 @@ from mrg2opus.schema import opus_columns as cols
 from mrg2opus.schema.opus_rows import (
     ArbsRow,
     CmdtNoteRow,
+    FreetimeRow,
     OpusRowSet,
     RatesRow,
     RouteNoteRow,
@@ -73,6 +74,15 @@ def _write_route_note_sheet(wb: Workbook, sheet_name: str, rows: list[RouteNoteR
         ws.append([data[field_name] for field_name in cols.RN_ROW_FIELDS])
 
 
+def _write_freetime_sheet(wb: Workbook, sheet_name: str, rows: list[FreetimeRow]) -> None:
+    ws: Worksheet = wb.create_sheet(sheet_name)
+    ws.append(cols.FREETIME_HEADER_GROUP)
+    ws.append([f or "" for f in cols.FREETIME_HEADER_FIELD])
+    for row in rows:
+        data = row.model_dump()
+        ws.append([data[field_name] for field_name in cols.FREETIME_ROW_FIELDS])
+
+
 def _sheet_names_for_suffix(suffix: str) -> dict[str, str]:
     """Real OPUS filing sheet names (see project-opus-note-sheet-taxonomy
     memory) - NOT the schema/opus_columns.py SHEET_NAME_* constants, which
@@ -92,6 +102,7 @@ def _sheet_names_for_suffix(suffix: str) -> dict[str, str]:
         "special_notes": f"SPECIAL NOTE{tag}",
         "route_notes": f"RN{tag}",
         "vertical_rates": f"VERTICAL RATES{tag}",
+        "freetime": f"FREETIME{tag}",
     }
 
 
@@ -110,6 +121,8 @@ def _write_row_set(wb: Workbook, row_set: OpusRowSet, names: dict[str, str]) -> 
         _write_route_note_sheet(wb, names["route_notes"], row_set.route_notes)
     if row_set.vertical_rates:
         _write_vertical_rates_sheet(wb, names["vertical_rates"], row_set.vertical_rates)
+    if row_set.freetime:
+        _write_freetime_sheet(wb, names["freetime"], row_set.freetime)
 
 
 def write_opus_workbook(

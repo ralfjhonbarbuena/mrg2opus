@@ -60,6 +60,7 @@ from mrg2opus.parsers.common.commodity import (
 )
 from mrg2opus.parsers.common.container_map import ContainerMap, load_container_map
 from mrg2opus.parsers.common.exclusion import is_excluded, location_is_excluded
+from mrg2opus.parsers.common.freetime import build_laec_freetime
 from mrg2opus.parsers.common.group_codes import load_group_codes
 from mrg2opus.parsers.common.header_grid import flatten_pod_header
 from mrg2opus.parsers.common.ordering import group_by_destination
@@ -177,6 +178,7 @@ class LAECRawData:
     yangtze_rows: list
     yangtze_eff_date: date | None
     yangtze_exp_date: date | None
+    freetime_variant: str
 
 
 class LAECParser(BaseMRGParser):
@@ -244,6 +246,19 @@ class LAECParser(BaseMRGParser):
                 wb[RAW_SHEET_YANGTZE], self._lookup_description
             )
 
+        # FAK and TIER 1's raw workbooks are structurally and textually
+        # identical (confirmed: no "Tier" mention anywhere in either, same
+        # sheet set) - there is no reliable signal in the raw MRG itself to
+        # pick TIER 1's own FREETIME variant (1 extra Argentina/Zarate row
+        # vs FAK's), so this always defaults to "fak" here. A real TIER 1
+        # filing is missing that one row as a result - a small, honestly-
+        # scoped gap in the same category as every other "not derivable
+        # from this file alone" gap already accepted in this project,
+        # rather than guessing from an unreliable heuristic (an earlier
+        # attempt keyed off a "Free Time " sheet present in one TIER 1
+        # sample but absent from another).
+        freetime_variant = "fak"
+
         return RawExtraction(
             tables={
                 "laec": LAECRawData(
@@ -256,6 +271,7 @@ class LAECParser(BaseMRGParser):
                     yangtze_rows=yangtze_rows,
                     yangtze_eff_date=yangtze_eff,
                     yangtze_exp_date=yangtze_exp,
+                    freetime_variant=freetime_variant,
                 )
             }
         )
@@ -494,7 +510,11 @@ class LAECParser(BaseMRGParser):
         for row in rates:
             row.commodity_note = note_text_by_description.get(row.commodity_group_description)
 
-        return OpusRowSet(rates=rates, rates_port_port=rates_port_port, cmdt_notes=cmdt_notes, arbs=arbs)
+        freetime = build_laec_freetime(data.freetime_variant, data.validity_start, data.validity_end)
+
+        return OpusRowSet(
+            rates=rates, rates_port_port=rates_port_port, cmdt_notes=cmdt_notes, arbs=arbs, freetime=freetime
+        )
 
     def _build_rates_row(
         self, gr: GridRow, code: str, description: str, cmdt_seq: int | None, prefix: str | None = None
