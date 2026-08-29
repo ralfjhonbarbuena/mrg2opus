@@ -10,7 +10,15 @@ from openpyxl import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 from mrg2opus.schema import opus_columns as cols
-from mrg2opus.schema.opus_rows import ArbsRow, CmdtNoteRow, OpusRowSet, RatesRow, RouteNoteRow, SpecialNoteRow
+from mrg2opus.schema.opus_rows import (
+    ArbsRow,
+    CmdtNoteRow,
+    OpusRowSet,
+    RatesRow,
+    RouteNoteRow,
+    SpecialNoteRow,
+    VerticalRatesRow,
+)
 
 
 def _write_rates_sheet(wb: Workbook, sheet_name: str, rows: list[RatesRow]) -> None:
@@ -20,6 +28,15 @@ def _write_rates_sheet(wb: Workbook, sheet_name: str, rows: list[RatesRow]) -> N
     for row in rows:
         data = row.model_dump()
         ws.append([data[field_name] for field_name in cols.RATES_ROW_FIELDS])
+
+
+def _write_vertical_rates_sheet(wb: Workbook, sheet_name: str, rows: list[VerticalRatesRow]) -> None:
+    ws: Worksheet = wb.create_sheet(sheet_name)
+    ws.append(cols.VERTICAL_RATES_HEADER_GROUP)
+    ws.append([f or "" for f in cols.VERTICAL_RATES_HEADER_FIELD])
+    for row in rows:
+        data = row.model_dump()
+        ws.append([data[field_name] for field_name in cols.VERTICAL_RATES_ROW_FIELDS])
 
 
 def _write_arbs_sheet(wb: Workbook, sheet_name: str, rows: list[ArbsRow]) -> None:
@@ -74,6 +91,7 @@ def _sheet_names_for_suffix(suffix: str) -> dict[str, str]:
         "cmdt_notes": f"CMDT NOTE{tag}",
         "special_notes": f"SPECIAL NOTE{tag}",
         "route_notes": f"RN{tag}",
+        "vertical_rates": f"VERTICAL RATES{tag}",
     }
 
 
@@ -90,6 +108,8 @@ def _write_row_set(wb: Workbook, row_set: OpusRowSet, names: dict[str, str]) -> 
         _write_special_note_sheet(wb, names["special_notes"], row_set.special_notes)
     if row_set.route_notes:
         _write_route_note_sheet(wb, names["route_notes"], row_set.route_notes)
+    if row_set.vertical_rates:
+        _write_vertical_rates_sheet(wb, names["vertical_rates"], row_set.vertical_rates)
 
 
 def write_opus_workbook(
@@ -112,15 +132,28 @@ def write_opus_workbook(
     wb.save(out_path)
 
 
-def write_opus_workbook_multi(row_sets: dict[str, OpusRowSet], out_path: Path | str) -> None:
+def write_opus_workbook_multi(
+    row_sets: dict[str, OpusRowSet],
+    out_path: Path | str,
+    sheet_name_overrides: dict[str, str] | None = None,
+) -> None:
     """Write several sub-lane OpusRowSets into ONE workbook, each under its
     own suffixed sheet names (e.g. {"TZDAR": ..., "KEMBA": ...} ->
     'OPUS RATES-TZDAR', 'OPUS RATES-KEMBA', ...). Pass {"": row_set} for a
-    single-output lane to reuse this same path."""
+    single-output lane to reuse this same path.
+
+    sheet_name_overrides lets a lane replace one or more base sheet names
+    (keyed by OpusRowSet field name, e.g. {"route_notes": "ROUTE NOTE"})
+    when its own real filing convention differs from the default - see
+    BaseMRGParser.SHEET_NAME_OVERRIDES."""
     wb = Workbook()
     wb.remove(wb.active)
     for suffix, row_set in row_sets.items():
-        _write_row_set(wb, row_set, _sheet_names_for_suffix(suffix))
+        names = _sheet_names_for_suffix(suffix)
+        if sheet_name_overrides:
+            tag = f"-{suffix}" if suffix else ""
+            names.update({key: f"{base}{tag}" for key, base in sheet_name_overrides.items()})
+        _write_row_set(wb, row_set, names)
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     wb.save(out_path)

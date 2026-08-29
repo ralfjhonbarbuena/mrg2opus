@@ -29,6 +29,16 @@ class UnclassifiedMRGError(Exception):
 class BaseMRGParser(ABC):
     lane_id: ClassVar[str]
 
+    # Per-lane real-filing sheet-name overrides, keyed by OpusRowSet field
+    # name (e.g. {"route_notes": "ROUTE NOTE"}) - most lanes' route notes
+    # file as "RN" (confirmed against LAWC's real ground truth), but a lane
+    # can override when its own ground truth uses something else (TAD
+    # FILING's real sheets are literally named "ROUTE NOTE" - see
+    # excel_io/writer.py's _sheet_names_for_suffix for the base names this
+    # overrides). Empty by default; step4_export.py reads this off the
+    # active parser class and passes it to write_opus_workbook_multi.
+    SHEET_NAME_OVERRIDES: ClassVar[dict[str, str]] = {}
+
     @classmethod
     @abstractmethod
     def detect(cls, wb: Workbook) -> float:

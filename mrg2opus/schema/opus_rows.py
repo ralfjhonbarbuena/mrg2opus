@@ -94,6 +94,93 @@ def explode_rates_row(row: RatesRow) -> list[RatesPortPortRow]:
     return _explode_group(row)
 
 
+class VerticalRatesRow(BaseModel):
+    """OPUS's alternate "long format" rate upload: one row per container
+    size instead of RatesRow's 4-rate-slots-per-row "horizontal" layout.
+    Confirmed against reference/2_OPUS/25_TAD FILING OEW OMW's real
+    "VERTICAL RATES" sheet - a pure derivative of RatesRow with no
+    information of its own (see build_vertical_rates() below), NOT a
+    TAD-specific concept: per the user, it's a general OPUS upload option
+    (limited to 10,000 rows per file) available for any lane, faster to
+    upload than the default "horizontal" RATES format. `per` combines the
+    row's own Prefix with a size digit (2=20', 4=40', 5=40'HC, 7=45' -
+    confirmed via the "D7 (OFT 45)" naming already seen in the TAD VBA
+    tool's own SETTINGS toggle); `cargo_type` repeats the row's CGO TYPE
+    alone (no prefix letter) as its own column, matching the real sheet's
+    "PER" and "Cargo Type" columns exactly. No commodity_note/route_note
+    columns exist on this sheet - confirmed, not an oversight.
+    Header-group fields (CMDT Seq/Commodity Group/Actual Customer/Route
+    Seq/Origin/O.Via/D.Via/Destination) are only populated on the FIRST
+    exploded row for a given source RatesRow, blank on the rest - the
+    same "shared header, blank-filled children" convention already used
+    by CmdtNoteRow, baked into the data itself rather than the writer.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    cmdt_seq: Optional[int] = None
+    commodity_group_code: Optional[str] = None
+    commodity_group_description: Optional[str] = None
+    actual_customer_code: Optional[str] = None
+    actual_customer_description: Optional[str] = None
+    route_seq: Optional[int] = None
+    origin_code: Optional[str] = None
+    origin_description: Optional[str] = None
+    origin_term: Optional[str] = None
+    origin_transmode: Optional[str] = None
+    o_via_code: Optional[str] = None
+    d_via_code: Optional[str] = None
+    destination_code: Optional[str] = None
+    destination_description: Optional[str] = None
+    destination_term: Optional[str] = None
+    destination_transmode: Optional[str] = None
+    per: Optional[str] = None
+    cargo_type: Optional[str] = None
+    rate: Optional[Decimal] = None
+
+
+# rate-field-name -> size digit, in the fixed column order the real sheet
+# uses (20', 40', 40'HC, 45').
+_VERTICAL_SIZE_SLOTS = [("rate_20", "2"), ("rate_40", "4"), ("rate_40hc", "5"), ("rate_45", "7")]
+
+_VERTICAL_SHARED_FIELDS = [
+    "cmdt_seq", "commodity_group_code", "commodity_group_description",
+    "actual_customer_code", "actual_customer_description", "route_seq",
+    "origin_code", "origin_description", "origin_term", "origin_transmode",
+    "o_via_code", "d_via_code",
+    "destination_code", "destination_description", "destination_term", "destination_transmode",
+]
+
+
+def explode_to_vertical_rates(row: RatesRow) -> list[VerticalRatesRow]:
+    """One RatesRow -> 0-4 VerticalRatesRow, one per populated rate slot."""
+    present = [(getattr(row, field), digit) for field, digit in _VERTICAL_SIZE_SLOTS if getattr(row, field) is not None]
+    shared = {name: getattr(row, name) for name in _VERTICAL_SHARED_FIELDS}
+    out: list[VerticalRatesRow] = []
+    for i, (rate, digit) in enumerate(present):
+        out.append(
+            VerticalRatesRow(
+                **(shared if i == 0 else {}),
+                per=f"{row.prefix}{digit}",
+                cargo_type=row.cgo_type,
+                rate=rate,
+            )
+        )
+    return out
+
+
+def build_vertical_rates(row_set: "OpusRowSet") -> "OpusRowSet":
+    """User-toggled (MappingProfile.include_vertical_rates), applied
+    uniformly across every lane by ui/parsing.py::run_parser() - not
+    something individual parsers populate themselves. Derives entirely
+    from row_set.rates (not rates_port_port - no evidence any lane needs
+    a port-port equivalent of this sheet)."""
+    vertical: list[VerticalRatesRow] = []
+    for row in row_set.rates:
+        vertical.extend(explode_to_vertical_rates(row))
+    return row_set.model_copy(update={"vertical_rates": vertical})
+
+
 class ArbsRow(BaseModel):
     """Field names/order verified directly against CSE.xlsx's OPUS ARBS
     ground truth (the Phase-1 placeholder schema was wrong - e.g. Proposal/
@@ -211,3 +298,6 @@ class OpusRowSet(BaseModel):
     cmdt_notes: list[CmdtNoteRow] = []
     special_notes: list[SpecialNoteRow] = []
     route_notes: list[RouteNoteRow] = []
+    # Populated only when MappingProfile.include_vertical_rates is set -
+    # see build_vertical_rates() above. Empty by default for every lane.
+    vertical_rates: list[VerticalRatesRow] = []

@@ -6,15 +6,15 @@ import openpyxl
 import pytest
 
 # Import every lane module so their LayoutProfiles are registered.
-from mrg2opus.parsers import auec, auwc, cse, eaf, laec, lawc, saf, waf  # noqa: F401
+from mrg2opus.parsers import auec, auwc, cse, eaf, laec, lawc, saf, tad_oew_omw, waf  # noqa: F401
 from mrg2opus.parsers.registry import all_profiles, classify, classify_all, get_profile
 
 REFERENCE_DIR = Path(__file__).resolve().parents[1] / "reference"
 
-# All 5 lanes are still registered parsers even though SAF has no real
+# All lanes are still registered parsers even though SAF has no real
 # reference/ file to classify against (see feedback-reference-folder-
-# convention memory) - SAMPLES only covers the 4 lanes that do.
-ALL_LANE_IDS = {"SAF", "EAF", "CSE", "LAEC", "LAWC", "WAF", "AUEC", "AUWC"}
+# convention memory) - SAMPLES only covers the lanes that do.
+ALL_LANE_IDS = {"SAF", "EAF", "CSE", "LAEC", "LAWC", "WAF", "AUEC", "AUWC", "TAD-OEW-OMW"}
 SAMPLES = {
     "EAF": REFERENCE_DIR / "1_MRGs" / "5_EAF-TZDAR" / "Asia EAF rate guideline TZDAR 19 Aug to 25 Aug 26 (14 Aug updated).xlsx",
     "CSE": REFERENCE_DIR / "1_MRGs" / "1_CSE FAK, CSE FAK FOR VELAG AND VEPBL" / "CSE Pricing Guideline (15-21  AUG 2026 ) FAK.xlsx",
@@ -34,6 +34,10 @@ SAMPLES = {
     "AUWC": (
         REFERENCE_DIR / "1_MRGs" / "33_AUS NEA to AUWC FAK"
         / "ONE AU MRG 2026_0815 to 2026_0831 - ex NEA to AUWC (07 August 2026).xlsx"
+    ),
+    "TAD-OEW-OMW": (
+        REFERENCE_DIR / "1_MRGs" / "25_TAD FILING OEW OMW"
+        / "AE WB Sept MRG Dated 26th Aug (OEWOMW).xlsx"
     ),
 }
 

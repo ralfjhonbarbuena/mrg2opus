@@ -79,3 +79,10 @@ class MappingProfile(BaseModel):
     # same as before this field existed.
     rfa_effective_date: Optional[date] = None
     rfa_expiry_date: Optional[date] = None
+    # Adds an OPUS VERTICAL RATES sheet (a "long format" alternate upload -
+    # one row per container size instead of RATES' 4-slots-per-row layout;
+    # per the user, faster to upload but capped at 10,000 rows per file).
+    # Off by default, applies uniformly to whichever lane is running - see
+    # schema/opus_rows.py::build_vertical_rates(), applied in
+    # ui/parsing.py::run_parser().
+    include_vertical_rates: bool = False

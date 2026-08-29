@@ -7,6 +7,7 @@ from pathlib import Path
 import streamlit as st
 
 from mrg2opus.excel_io.writer import write_opus_workbook_multi
+from mrg2opus.parsers.registry import get_profile
 from mrg2opus.schema.opus_rows import OpusRowSet
 from mrg2opus.ui.errors import show_error
 from mrg2opus.ui.state import WizardState, reset_state
@@ -38,9 +39,10 @@ def _apply_skips(row_sets: dict[str, OpusRowSet], skip_output_sheets: dict[str, 
 
 def _build_workbook_bytes(state: WizardState) -> bytes:
     row_sets = _apply_skips(state.row_sets, state.profile.skip_output_sheets)
+    overrides = get_profile(state.selected_lane_id).parser_cls.SHEET_NAME_OVERRIDES if state.selected_lane_id else None
     with tempfile.TemporaryDirectory() as tmp_dir:
         out_path = Path(tmp_dir) / "opus_output.xlsx"
-        write_opus_workbook_multi(row_sets, out_path)
+        write_opus_workbook_multi(row_sets, out_path, sheet_name_overrides=overrides)
         return out_path.read_bytes()
 
 

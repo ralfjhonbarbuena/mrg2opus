@@ -50,6 +50,45 @@ RATES_ROW_FIELDS = [
     "commodity_note", "route_note",
 ]
 
+# --- VERTICAL RATES: OPUS's alternate "long format" rate upload, one row ----
+# per container size instead of RATES' 4-slots-per-row layout. Verified
+# directly against reference/2_OPUS/25_TAD FILING OEW OMW's real sheet - a
+# general OPUS feature (not TAD-specific, per the user), so this lives
+# alongside RATES_HEADER_* rather than under a TAD-only module.
+
+VERTICAL_RATES_HEADER_GROUP = [
+    "CMDT\nSeq.",
+    "Commodity Group", "Commodity Group",
+    "Actual Customer", "Actual Customer",
+    "Route\nSeq.",
+    "Origin", "Origin", "Origin", "Origin",
+    "O.Via", "D.Via",
+    "Destination", "Destination", "Destination", "Destination",
+    "Rate(USD)", "Rate(USD)", "Rate(USD)",
+]
+
+VERTICAL_RATES_HEADER_FIELD = [
+    None,
+    "Code", "Description",
+    "Code", "Description",
+    None,
+    "Code", "Description", "Term", "Transmode",
+    "Code", None,
+    None, "Description", "Term", "Transmode",
+    "PER", "Cargo Type", "Rate",
+]
+
+VERTICAL_RATES_ROW_FIELDS = [
+    "cmdt_seq",
+    "commodity_group_code", "commodity_group_description",
+    "actual_customer_code", "actual_customer_description",
+    "route_seq",
+    "origin_code", "origin_description", "origin_term", "origin_transmode",
+    "o_via_code", "d_via_code",
+    "destination_code", "destination_description", "destination_term", "destination_transmode",
+    "per", "cargo_type", "rate",
+]
+
 # --- OPUS ARBS: single header row --------------------------------------------
 # Verified directly against CSE.xlsx's OPUS ARBS sheet (26 columns).
 
