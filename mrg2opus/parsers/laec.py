@@ -52,6 +52,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from mrg2opus.location_bank.store import LocationBankStore
 from mrg2opus.parsers.base import BaseMRGParser, RawExtraction
+from mrg2opus.parsers.common.cmdt_notes import build_cmdt_notes
 from mrg2opus.parsers.common.commodity import (
     CommodityNoteSpec,
     build_notes_by_description,
@@ -193,9 +194,13 @@ class LAECParser(BaseMRGParser):
     def detect(cls, wb: Workbook) -> float:
         if RAW_SHEET_DRY not in wb.sheetnames:
             return 0.0
-        score = 0.5
         ws = wb[RAW_SHEET_DRY]
         title = str(ws.cell(row=1, column=1).value or "")
+        if "LUX" in title.upper():
+            # LAEC LUX variant - a structurally different raw shape (single
+            # flat POD grid, no "POL: NON-ISC" split) - see LAECLuxParser.
+            return 0.0
+        score = 0.5
         if "LAEC" in title.upper():
             score += 0.3
         if any(str(ws.cell(row=r, column=1).value or "").strip().upper() == "POL: NON-ISC" for r in range(1, 10)):
@@ -566,9 +571,11 @@ def _to_decimal(value: float | None) -> Decimal | None:
     return None if value is None else Decimal(str(value))
 
 
-def _parse_validity(ws: Worksheet) -> tuple[date | None, date | None]:
-    start = ws.cell(row=VALIDITY_ROW, column=VALIDITY_FROM_COL).value
-    end = ws.cell(row=VALIDITY_ROW, column=VALIDITY_TO_COL).value
+def _parse_validity(
+    ws: Worksheet, row: int = VALIDITY_ROW, from_col: int = VALIDITY_FROM_COL, to_col: int = VALIDITY_TO_COL
+) -> tuple[date | None, date | None]:
+    start = ws.cell(row=row, column=from_col).value
+    end = ws.cell(row=row, column=to_col).value
     if isinstance(start, str):
         start = date.fromisoformat(start)
     elif hasattr(start, "date"):
@@ -586,6 +593,231 @@ register(
         parser_cls=LAECParser,
         sheet_name_patterns=[r"^DRY$"],
         title_keywords=["LAEC"],
-        header_fingerprint=["D2", "D4", "D5"],
+        # "POL: Non-ISC" (verbatim, confirmed on this lane's own DRY sheet)
+        # replaces the old ["D2","D4","D5"] fingerprint - those tokens are
+        # NOT discriminating: LAEC LUX's own DRY sheet has them too (same
+        # D2/D4/D5 container labels), which without this change classified
+        # a LUX raw file as this lane at confidence 1.0 (see
+        # LAECLuxParser's own profile below for the LUX-specific fix).
+        header_fingerprint=["POL: Non-ISC"],
+    )
+)
+
+
+# --- LAEC LUX ("...for via LUX Service") -----------------------------------
+#
+# A distinct, reduced-scope LAEC variant - RATES + SUR (CMDT NOTE) +
+# FREETIME only, no ORIGIN ARBS, no OPUS SPECIAL NOTE (confirmed against
+# real ground truth: the OPUS workbook has exactly 3 sheets, ['RATES',
+# 'SUR', 'freetime']) - filed as a raw workbook with a completely different
+# shape from the main LAEC lane above:
+#
+# - Sheet names differ: ['DRY', 'tiger', 'ECSA Add-on', 'IMO charge'].
+#   "tiger" is stale cruft - a broken VLOOKUP scratch sheet where every
+#   "Freight" cell is a #REF! error and the POR codes are unrelated CN/HK/
+#   TW ports, not the real Indian/Pakistani origins in the actual DRY grid
+#   - never read here. "ECSA Add-on" (lowercase "on") is this variant's own
+#   casing, distinct from the main lane's "ECSA Add-On" - a separate
+#   RAW_SHEET_ECSA_LUX constant below avoids the case-sensitive sheet-name
+#   lookup silently missing it.
+# - DRY's own layout is ONE flat POD header block (no Non-ISC/ISC split):
+#   POD codes at row 13, container labels (D2/D4/D5/NOR) at row 14, data
+#   from row 15 (6 origins in both real samples seen, rows 15-20).
+#   Validity dates live at row 8 cols C/D (not row 4 like the main lane).
+# - Each POD block is 4 columns (D2/D4/D5/NOR) EXCEPT the last two (Rio De
+#   Janeiro, Asuncion), which are only 3 (D2/D4/D5, no NOR) - confirmed
+#   real, not a data-entry gap. flatten_pod_header() handles this natively
+#   since it reads each column's own container label rather than assuming
+#   a fixed block width.
+# - "NOR" reads as a reefer rate slot, but every NOR cell in both real
+#   samples is "-" (no rate offered). laec.yaml's container map doesn't
+#   map "NOR" to a rate suffix, so flatten_pod_header/_parse_grid_section
+#   silently skip it exactly like any other unmapped container label - no
+#   reefer-specific wiring added since there's no confirmed ground-truth
+#   reefer row to verify one against.
+# - Commodity: one single group (default "G0007" / "FAK -  for via LUX
+#   service only" - not present anywhere in the raw file, same
+#   externally-assigned-default category as every other lane's commodity
+#   identity, user-overridable). Charge-code order for CMDT NOTE, verified
+#   against this variant's own SUR sheet: HEA, PSS, OBS, EFS, MBS - a
+#   genuinely different order from the main lane's NON_ISC_CHARGE_CODES.
+# - CMDT NOTE gets an extra line, "Rates are applicable for Vessel Service
+#   Lane: LUX", and the parent row's own Lane column is set to "LUX" -
+#   unique to this variant (see build_cmdt_notes()'s service_lane param).
+#   The child rows' own Application Effective/Expires dates do NOT track
+#   this filing's own rate validity window (unlike the parent APP row,
+#   which does) - confirmed different between both real samples (2026-05-
+#   14/2026-09-30 for the 20260815-20260831 filing vs 2026-08-23/2026-12-
+#   31 for the 20260901-20260914 filing) and not present anywhere else in
+#   the raw file - an externally-assigned RFA window, the same accepted
+#   gap as the main LAEC lane's own rfa_effective_date/rfa_expiry_date
+#   override (MappingProfile), reused here as-is.
+# - ECSA Add-on: same shape/columns as the main lane's own sheet (just a
+#   shorter row range, 4-8 vs 4-9 - reuses _parse_ecsa_sheet() unchanged
+#   since row 9 is simply blank here and already skipped).
+# - FREETIME uses build_laec_freetime("lux", ...) - its own, much smaller
+#   table (BR/AR/UY/PY only), with a populated Seq column (1..8), unlike
+#   FAK/TIER1's blank one.
+
+RAW_SHEET_ECSA_LUX = "ECSA Add-on"
+
+LUX_VALIDITY_ROW, LUX_VALIDITY_FROM_COL, LUX_VALIDITY_TO_COL = 8, 3, 4
+
+COMMODITY_LUX = ("G0007", "FAK -  for via LUX service only", None)
+
+# Verified against this variant's own SUR sheet - child-row order, not the
+# alphabetized "inclusive of" text order (see build_cmdt_notes' own
+# sort_text_names).
+LUX_CHARGE_CODES = ["HEA", "PSS", "OBS", "EFS", "MBS"]
+
+LUX_SECTION = DrySectionConfig(
+    pod_code_row=13, container_label_row=14, data_min_row=15, data_max_row=20, min_col=3, max_col=29,
+    commodity=COMMODITY_LUX,
+)
+
+
+@dataclass
+class LAECLuxRawData:
+    validity_start: date | None
+    validity_end: date | None
+    grid_rows: list[GridRow]
+    ecsa_add_ons: list[EcsaAddOn]
+
+
+class LAECLuxParser(LAECParser):
+    """LAEC LUX ("...for via LUX Service") - see the module-level comment
+    block above for the full, verified divergence from the main LAECParser
+    above, which this subclasses only to reuse its generic instance helpers
+    (_parse_grid_section, _build_rates_row, _parse_ecsa_sheet,
+    _resolve_codes, _lookup_description, _resolve_add_on_destination) and
+    its __init__ (same laec.yaml container map / group codes)."""
+
+    lane_id: ClassVar[str] = "LAEC-LUX"
+
+    @classmethod
+    def detect(cls, wb: Workbook) -> float:
+        if RAW_SHEET_DRY not in wb.sheetnames:
+            return 0.0
+        ws = wb[RAW_SHEET_DRY]
+        title = str(ws.cell(row=1, column=1).value or "")
+        score = 0.5 if "LAEC" in title.upper() else 0.0
+        if "LUX" in title.upper():
+            score += 0.3
+        nor_tokens = {
+            str(ws.cell(row=LUX_SECTION.container_label_row, column=c).value or "").strip().upper()
+            for c in range(LUX_SECTION.min_col, LUX_SECTION.max_col + 1)
+        }
+        if "NOR" in nor_tokens:
+            score += 0.2
+        return min(score, 1.0)
+
+    def parse_raw(self, wb: Workbook) -> RawExtraction:
+        ws = wb[RAW_SHEET_DRY]
+        validity_start, validity_end = _parse_validity(ws, LUX_VALIDITY_ROW, LUX_VALIDITY_FROM_COL, LUX_VALIDITY_TO_COL)
+        grid_rows = self._parse_grid_section(ws, LUX_SECTION)
+
+        ecsa_add_ons: list[EcsaAddOn] = []
+        if RAW_SHEET_ECSA_LUX in wb.sheetnames:
+            ecsa_add_ons = self._parse_ecsa_sheet(wb[RAW_SHEET_ECSA_LUX])
+
+        return RawExtraction(
+            tables={
+                "laec_lux": LAECLuxRawData(
+                    validity_start=validity_start,
+                    validity_end=validity_end,
+                    grid_rows=grid_rows,
+                    ecsa_add_ons=ecsa_add_ons,
+                )
+            }
+        )
+
+    def to_opus_rows(self, raw: RawExtraction, config: MappingProfile) -> OpusRowSet:
+        data: LAECLuxRawData = raw.tables["laec_lux"]
+
+        code, default_description, _ = COMMODITY_LUX
+        description = resolve_commodity_description(default_description, config)
+        cmdt_seq = config.commodity_sequence_overrides.get(default_description)
+        output_code = resolve_commodity_code(default_description, code, config)
+
+        dr_rows, dr_pp, dg_rows, dg_pp = [], [], [], []
+        base_by_key: dict[tuple[str, str], RatesRow] = {}
+        for gr in data.grid_rows:
+            row = self._build_rates_row(gr, output_code, description, cmdt_seq)
+            if row is None:
+                continue
+            dr_pp.extend(explode_rates_row(row))
+            base_by_key[(row.origin_code, row.destination_code)] = row
+            dr_rows.append(row)
+
+            if self.container_map.cgo_type == "DR" and not config.skip_dg_generation.get(default_description, False):
+                dg_row = row.model_copy(update={"cgo_type": "DG"})
+                dg_pp.extend(explode_rates_row(dg_row))
+                dg_rows.append(dg_row)
+
+        rates = group_by_destination(dr_rows) + group_by_destination(dg_rows)
+        rates_port_port = group_by_destination(dr_pp) + group_by_destination(dg_pp)
+
+        # ECSA Add-On: extra destinations built from an existing
+        # destination's ("T/S Port") rate plus a fixed add-on - no DG
+        # duplicate (same as the main lane's own verified behavior).
+        extra_rows, extra_pp = [], []
+        origin_codes_seen = {origin for origin, _dest in base_by_key}
+        for origin_code in origin_codes_seen:
+            for addon in data.ecsa_add_ons:
+                ts_row = base_by_key.get((origin_code, addon.ts_port_code))
+                if ts_row is None:
+                    continue
+                dest_code_resolved, dest_desc_resolved = self._resolve_add_on_destination(addon.dest_name)
+                if dest_code_resolved is None:
+                    continue
+                new_row = ts_row.model_copy(
+                    update={
+                        "destination_code": dest_code_resolved,
+                        "destination_description": dest_desc_resolved,
+                        "rate_20": (ts_row.rate_20 + addon.add_on_20) if ts_row.rate_20 is not None else None,
+                        "rate_40": (ts_row.rate_40 + addon.add_on_40) if ts_row.rate_40 is not None else None,
+                        "rate_40hc": (
+                            (ts_row.rate_40hc + addon.add_on_40) if ts_row.rate_40hc is not None else None
+                        ),
+                    }
+                )
+                extra_rows.append(new_row)
+                extra_pp.extend(explode_rates_row(new_row))
+        rates.extend(group_by_destination(extra_rows))
+        rates_port_port.extend(group_by_destination(extra_pp))
+
+        notes = build_cmdt_notes(
+            data.validity_start,
+            data.validity_end,
+            LUX_CHARGE_CODES,
+            sequential_charge_seq=True,
+            charge_code_names_override=CHARGE_CODE_NAMES_OVERRIDE,
+            excluded_codes=frozenset(config.excluded_charge_codes),
+            rfa_effective=config.rfa_effective_date,
+            rfa_expiry=config.rfa_expiry_date,
+            service_lane="LUX",
+        )
+        note_text = notes[0].contents if notes else None
+        for row in rates:
+            row.commodity_note = note_text
+
+        freetime = build_laec_freetime("lux", data.validity_start, data.validity_end)
+
+        return OpusRowSet(rates=rates, rates_port_port=rates_port_port, cmdt_notes=notes, freetime=freetime)
+
+
+register(
+    LayoutProfile(
+        lane_id=LAECLuxParser.lane_id,
+        parser_cls=LAECLuxParser,
+        sheet_name_patterns=[r"^DRY$"],
+        title_keywords=["LAEC", "LUX"],
+        # "NOR" (exact cell value, the 4th rate-slot header on most POD
+        # blocks in this variant's own DRY sheet) - confirmed absent as an
+        # exact cell value anywhere in the main LAEC lane's own raw
+        # workbook, so it discriminates the two without relying on the
+        # shared, non-discriminating D2/D4/D5 tokens (see LAECParser's own
+        # profile above).
+        header_fingerprint=["NOR"],
     )
 )
