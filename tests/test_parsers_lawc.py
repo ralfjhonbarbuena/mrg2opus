@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import openpyxl
@@ -87,6 +88,79 @@ def test_lawc_rates_matches_ground_truth():
     expected = _drop_known_gaps(read_rates_sheet(ref_wb, "RATES"))
 
     result = diff_by_key(generated, expected, key_fn=rates_row_key, fields=cols.RATES_ROW_FIELDS, ignore_fields=RATES_IGNORE_FIELDS)
+    assert not result.missing, f"missing {len(result.missing)} expected rows, e.g. {list(result.missing)[:5]}"
+    assert not result.extra, f"{len(result.extra)} unexpected generated rows, e.g. {list(result.extra)[:5]}"
+    assert not result.field_mismatches, f"{len(result.field_mismatches)} field mismatches, e.g. {result.field_mismatches[:10]}"
+
+
+# LAWC's two TIER 1 reference folders (17, 18) raw MRGs are structurally
+# identical to their FAK counterparts above (same sheet names/layout/
+# origin-destination universe - the only in-workbook difference found is
+# the main sheet's B4 label cell, literally "FAK" on FAK files and blank
+# on TIER 1 files; negotiated Tier 1 rate VALUES differ but the grid shape
+# doesn't) - so the same LAWCParser code path, the same RATES_IGNORE_FIELDS,
+# and the same _KNOWN_MISSING_DESTINATIONS/_drop_known_gaps gaps documented
+# above apply unchanged; verified by running the full RATES diff against
+# both real TIER 1 ground truth files with zero missing/extra rows.
+#
+# The ONE genuine TIER 1-only difference (not present in either FAK
+# ground truth file): the TIER 1 OPUS export itself globally replaces
+# every "," with two spaces and every "\n" with one space, in every text
+# field - confirmed whole-file, not scoped to origin_description: FAK's
+# ground truth has commas in exactly 4988 RATES rows' origin/destination
+# descriptions; TIER 1's ground truth has double-spaces in exactly the
+# same 4988 row positions (and commodity_note's "\n" becomes " " the same
+# way) - identical in BOTH real TIER 1 weeks (folders 17 and 18). This is
+# a downstream export-tool artifact of however Tier 1 filings get
+# generated, not a derivable parsing rule and not something this parser's
+# Location-Bank-sourced text should reproduce (FAK's own comma'd
+# descriptions are correct and already verified by the test above) - only
+# used to normalize the TIER 1 comparison below, never applied to the
+# parser's actual output.
+def _normalize_tier1_punctuation(value):
+    if not isinstance(value, str):
+        return value
+    return re.sub(r"\s+", " ", value.replace(",", " ")).strip()
+
+
+def _normalize_tier1_rows(rows: list[dict]) -> list[dict]:
+    out = []
+    for r in rows:
+        r = dict(r)
+        for field_name in ("origin_description", "destination_description"):
+            r[field_name] = _normalize_tier1_punctuation(r.get(field_name))
+        out.append(r)
+    return out
+
+
+_TIER1_PAIRS = [
+    (
+        REFERENCE_DIR / "1_MRGs" / "17_LAWC TIER 1"
+        / "20260812_MRG guideline template China_HKG_SIN_TWN_KR (15-21 Aug) and SEA ISC (15-31 Aug)_T1.xlsx",
+        REFERENCE_DIR / "2_OPUS" / "17_LAWC TIER 1" / "LWE_OPUS 15 TO 21.xlsx",
+    ),
+    (
+        REFERENCE_DIR / "1_MRGs" / "18_LAWC TIER 1"
+        / "20260820_MRG guideline template China_HKG_SIN_TWN_KR (22-31 Aug) and SEA ISC (15-31 Aug)_T1.xlsx",
+        REFERENCE_DIR / "2_OPUS" / "18_LAWC TIER 1" / "LWE_OPUS 22 TO 31.xlsx",
+    ),
+]
+
+
+@pytest.mark.parametrize("raw_path,opus_path", _TIER1_PAIRS)
+def test_lawc_tier1_rates_matches_ground_truth(raw_path, opus_path):
+    if not raw_path.exists() or not opus_path.exists():
+        pytest.skip("reference/ ground-truth files not present in this checkout")
+    wb = openpyxl.load_workbook(raw_path, data_only=True)
+    row_set = LAWCParser().run(wb, MappingProfile())
+    generated = _normalize_tier1_rows(_drop_known_gaps([r.model_dump() for r in row_set.rates]))
+
+    ref_wb = openpyxl.load_workbook(opus_path, data_only=True, read_only=True)
+    expected = _normalize_tier1_rows(_drop_known_gaps(read_rates_sheet(ref_wb, "RATES")))
+
+    result = diff_by_key(
+        generated, expected, key_fn=rates_row_key, fields=cols.RATES_ROW_FIELDS, ignore_fields=RATES_IGNORE_FIELDS
+    )
     assert not result.missing, f"missing {len(result.missing)} expected rows, e.g. {list(result.missing)[:5]}"
     assert not result.extra, f"{len(result.extra)} unexpected generated rows, e.g. {list(result.extra)[:5]}"
     assert not result.field_mismatches, f"{len(result.field_mismatches)} field mismatches, e.g. {result.field_mismatches[:10]}"
