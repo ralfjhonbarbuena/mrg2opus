@@ -6,7 +6,7 @@ import openpyxl
 import pytest
 
 # Import every lane module so their LayoutProfiles are registered.
-from mrg2opus.parsers import aubp, auec, auwc, cse, eaf, laec, lawc, saf, tad_oew_omw, waf, west_asia_waf  # noqa: F401
+from mrg2opus.parsers import aubp, auec, auwc, cse, eaf, laec, lawc, nz1_sea, saf, tad_oew_omw, waf, west_asia_waf  # noqa: F401
 from mrg2opus.parsers.registry import all_profiles, classify, classify_all, get_profile
 
 REFERENCE_DIR = Path(__file__).resolve().parents[1] / "reference"
@@ -15,7 +15,8 @@ REFERENCE_DIR = Path(__file__).resolve().parents[1] / "reference"
 # reference/ file to classify against (see feedback-reference-folder-
 # convention memory) - SAMPLES only covers the lanes that do.
 ALL_LANE_IDS = {
-    "SAF", "EAF", "CSE", "LAEC", "LAEC-LUX", "LAWC", "WAF", "AUEC", "AUWC", "TAD-OEW-OMW", "WEST-ASIA-WAF", "AUBP",
+    "SAF", "EAF", "CSE", "LAEC", "LAEC-LUX", "LAWC", "WAF", "AUEC", "AUWC",
+    "TAD-OEW-OMW", "WEST-ASIA-WAF", "AUBP", "NZ1-SEA",
 }
 SAMPLES = {
     "EAF": REFERENCE_DIR / "1_MRGs" / "5_EAF-TZDAR" / "Asia EAF rate guideline TZDAR 19 Aug to 25 Aug 26 (14 Aug updated).xlsx",
@@ -52,6 +53,10 @@ SAMPLES = {
     "AUBP": (
         REFERENCE_DIR / "1_MRGs" / "29_AUS SEA to AUBP FAK"
         / "ONE SEA to AU MRG 20260901 to 20260914 (24 AUG 2026).xlsx"
+    ),
+    "NZ1-SEA": (
+        REFERENCE_DIR / "1_MRGs" / "41_NZ1 SEA to NZBP FAK"
+        / "ONE SEA to NZ MRG 20260815 to 20260831 (7 Aug 2026).xlsx"
     ),
 }
 
