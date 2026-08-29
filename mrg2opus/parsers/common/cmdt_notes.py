@@ -37,6 +37,8 @@ def build_cmdt_notes(
     rfa_effective: date | None = None,
     rfa_expiry: date | None = None,
     service_lane: str | None = None,
+    scope_values: list[str | None] | None = None,
+    scope_field: str = "pol",
 ) -> list[CmdtNoteRow]:
     """sequential_charge_seq: SAF's ground truth leaves child rows' Charge Seq
     blank (only the parent gets 1); EAF's numbers every row 1, 2, 3, ...
@@ -69,9 +71,17 @@ def build_cmdt_notes(
     truth) - when set, inserts an extra "Rates are applicable for Vessel
     Service Lane: {service_lane}" line right after the validity line, and
     stamps the parent row's own Lane column with the same value. None
-    (default) leaves both untouched, so every other lane is unaffected."""
+    (default) leaves both untouched, so every other lane is unaffected.
+    scope_values/scope_field: for a lane whose child rows carry a per-code
+    scope (e.g. AUBP's POR-scoped THL/ISL/DOC - see aubp.py), pass a list
+    positionally aligned with included_codes (None for an unscoped/blanket
+    code) plus which CmdtNoteRow field to stamp it on ("por" or "pol").
+    Left as None by default - every existing caller is unaffected."""
     if excluded_codes:
-        included_codes = [c for c in included_codes if c not in excluded_codes]
+        keep = [c not in excluded_codes for c in included_codes]
+        if scope_values is not None:
+            scope_values = [v for v, k in zip(scope_values, keep) if k]
+        included_codes = [c for c, k in zip(included_codes, keep) if k]
     if not included_codes or validity_start is None or validity_end is None:
         return []
 
@@ -113,6 +123,7 @@ def build_cmdt_notes(
             application_effective=child_effective,
             application_expires=child_expires,
             application="I",
+            **({scope_field: scope_values[i]} if scope_values is not None else {}),
         )
         for i, code in enumerate(included_codes)
     ]
