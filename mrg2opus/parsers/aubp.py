@@ -137,12 +137,12 @@ from openpyxl.worksheet.worksheet import Worksheet
 from mrg2opus.location_bank.fuzzy_match import LocationResolver
 from mrg2opus.location_bank.store import LocationBankStore
 from mrg2opus.parsers.base import BaseMRGParser, RawExtraction
+from mrg2opus.parsers.common.cmdt_notes import build_cmdt_notes
 from mrg2opus.parsers.common.commodity import resolve_commodity_code, resolve_commodity_description
 from mrg2opus.parsers.common.exclusion import is_excluded
 from mrg2opus.parsers.common.ordering import group_by_destination
 from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.presets.models import MappingProfile
-from mrg2opus.schema.charge_codes import CHARGE_CODE_NAMES
 from mrg2opus.schema.opus_rows import CmdtNoteRow, OpusRowSet, RatesRow
 
 SHEET_MAIN = "ex SEA to MEL BNE ADL"
@@ -275,7 +275,7 @@ BLANKET_CHARGES = ["OBS", "EFS", "PSS"]
 SCOPABLE_CHARGE_ORDER = ["THL", "ISL", "DOC"]
 
 _PAREN_RE = re.compile(r"^(.*?)\s*\(([^)]*)\)\s*$")
-_TERM_OVERRIDE_RE = re.compile(r"^(\w+)/CY$", re.IGNORECASE)
+_TERM_OVERRIDE_RE = re.compile(r"^(\w+)\s*/\s*CY$", re.IGNORECASE)
 _INCL_RE = re.compile(r"^incl\.?\s*(.+)$", re.IGNORECASE)
 # "01 Sept 2026 to 14 Sept 2026" - this lane's own validity text repeats
 # the year after BOTH the start and end month (unlike AUEC/AUWC's "d Mon to
@@ -290,16 +290,19 @@ def _month_number(name: str) -> int:
 
 
 def _parse_validity(ws: Worksheet, row: int, col: int) -> tuple[date | None, date | None]:
+    """Returns (None, None) only when the validity text doesn't match the
+    expected shape at all (a genuinely different/absent cell). Once matched,
+    an unrecognized month name or out-of-range day raises rather than
+    silently swallowing the error - those would otherwise produce a fully
+    empty CMDT NOTE/SUR sheet with no signal anything was wrong (see
+    _build_cmdt_notes' own validity_start/validity_end is None guard)."""
     text = str(ws.cell(row=row, column=col).value or "")
     m = _VALIDITY_RE.search(text)
     if not m:
         return None, None
     d1, mon1, d2, mon2, year = m.groups()
-    try:
-        y = int(year)
-        return date(y, _month_number(mon1), int(d1)), date(y, _month_number(mon2), int(d2))
-    except ValueError:
-        return None, None
+    y = int(year)
+    return date(y, _month_number(mon1), int(d1)), date(y, _month_number(mon2), int(d2))
 
 
 @dataclass
@@ -337,6 +340,18 @@ def _parse_origin_paren(origin_text: str) -> ParsedOrigin:
     return ParsedOrigin(base, None, False, [])
 
 
+def _merge_incl(target: dict[str, list[str]], source: dict[str, list[str]]) -> None:
+    """Unions `source`'s codes into `target` in place, keyed by origin code -
+    NOT a first-wins `setdefault`, since the same origin's "(incl ...)"
+    scoping is expected to be merged (not silently overridden) if it's ever
+    seen on more than one raw sheet or column-group for the same origin."""
+    for code, codes in source.items():
+        existing = target.setdefault(code, [])
+        for c in codes:
+            if c not in existing:
+                existing.append(c)
+
+
 def _resolve_origin(base_text: str) -> tuple[str, str] | None:
     key = base_text.strip().lower()
     if key in ICD_CLUSTERS:
@@ -346,10 +361,20 @@ def _resolve_origin(base_text: str) -> tuple[str, str] | None:
     return None
 
 
+class UnrecognizedOriginError(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class ColumnGroup:
     """One rate-column-group on a raw sheet: which columns feed which
-    output rate slot, and which commodity group it belongs to."""
+    output rate slot, and which commodity group it belongs to.
+
+    dest_col: for the MAIN sheet, the column whose row-4 cell carries this
+    group's own destination code(s) (see module docstring) - carried on
+    the same object as the rate columns so the two can never drift out of
+    index-alignment the way two separate parallel lists could. None for
+    SINGLE_DEST_COLUMN_GROUPS, which don't have a per-group destination."""
 
     commodity: str  # "MAIN" | "RF" | "RAD"
     prefix: str
@@ -357,19 +382,19 @@ class ColumnGroup:
     col_20: int
     col_40: int | None  # None when this group's 2nd column feeds 40HC instead (RF/RAD)
     col_40hc: int
+    dest_col: int | None = None
 
 
 # MAIN sheet: 5 column-groups, each with its own destination read off row 4
 # (see module docstring). Order here matches the raw sheet's own column
 # order left-to-right.
 MAIN_COLUMN_GROUPS = [
-    ColumnGroup("MAIN", "D", "DR", 5, 6, 7),
-    ColumnGroup("RF", "R", "RF", 8, None, 9),
-    ColumnGroup("RF", "R", "RF", 10, None, 11),
-    ColumnGroup("RAD", "R", "DR", 12, None, 13),
-    ColumnGroup("RAD", "R", "DR", 14, None, 15),
+    ColumnGroup("MAIN", "D", "DR", 5, 6, 7, dest_col=5),
+    ColumnGroup("RF", "R", "RF", 8, None, 9, dest_col=8),
+    ColumnGroup("RF", "R", "RF", 10, None, 11, dest_col=10),
+    ColumnGroup("RAD", "R", "DR", 12, None, 13, dest_col=12),
+    ColumnGroup("RAD", "R", "DR", 14, None, 15, dest_col=14),
 ]
-MAIN_COLUMN_GROUP_DEST_COL = {0: 5, 1: 8, 2: 10, 3: 12, 4: 14}
 
 # SYD/FRE sheets: single destination for the whole sheet, 3 column-groups.
 SINGLE_DEST_COLUMN_GROUPS = [
@@ -384,6 +409,17 @@ SINGLE_DEST_COLUMN_GROUPS = [
 # rates" rule.
 YANGON_CODE, THILAWA_CODE = "MMRGN", "MMTLA"
 
+# SYD/FRE's own POD label is always exactly "Sydney"/"Fremantle" - each
+# sheet has exactly one fixed, known destination by construction, so this
+# is checked before falling back to fuzzy matching (which both currently
+# resolve correctly, but a future ambiguous fuzzy score would otherwise
+# silently drop the entire sheet - see module docstring's origin-resolution
+# rationale for the same "hardcode a short, fixed, verified list" approach).
+DEST_OVERRIDES: dict[str, tuple[str, str]] = {
+    "sydney": ("AUSYD", "SYDNEY, NSW"),
+    "fremantle": ("AUFRE", "FREMANTLE, WA"),
+}
+
 
 @dataclass
 class OriginValueRow:
@@ -394,12 +430,29 @@ class OriginValueRow:
     values: dict[str, float]  # "20" | "40" | "40hc" -> rate
 
 
+def _values_match(a: dict[str, float], b: dict[str, float]) -> bool:
+    """Rounded comparison (2dp, these are USD rates) rather than exact float
+    equality - a formula-derived rate can differ from a literal by a tiny
+    floating-point epsilon while being economically identical."""
+    if a.keys() != b.keys():
+        return False
+    return all(round(a[k], 2) == round(b[k], 2) for k in a)
+
+
 def _merge_yangon_thilawa(rows: list[OriginValueRow]) -> list[OriginValueRow]:
     """See module docstring - merges Yangon+Thilawa into one row when both
-    are present with byte-identical values; otherwise leaves rows as-is."""
+    are present with matching rates AND term; otherwise leaves rows as-is
+    (a term mismatch means the two origins aren't actually interchangeable
+    this week, so the merge shouldn't silently pick one and drop the
+    other's term)."""
     yangon = next((r for r in rows if r.origin_code == YANGON_CODE), None)
     thilawa = next((r for r in rows if r.origin_code == THILAWA_CODE), None)
-    if yangon is None or thilawa is None or yangon.values != thilawa.values:
+    if (
+        yangon is None
+        or thilawa is None
+        or not _values_match(yangon.values, thilawa.values)
+        or yangon.origin_term != thilawa.origin_term
+    ):
         return rows
     merged = OriginValueRow(
         origin_code=";".join(sorted([YANGON_CODE, THILAWA_CODE])),
@@ -456,36 +509,21 @@ def _build_cmdt_notes(
     rfa_expiry: date | None,
 ) -> list[CmdtNoteRow]:
     """charges is an ordered list of (code, por) pairs - por is None for a
-    blanket (unscoped) code. Mirrors auec.py::_build_group_cmdt_notes
-    exactly except for stamping `por` instead of `pol` (see module
-    docstring on why this lane uses POR)."""
-    if validity_start is None or validity_end is None or not charges:
+    blanket (unscoped) code. Delegates to the shared
+    common/cmdt_notes.py::build_cmdt_notes builder (extended with a
+    scope_values/scope_field parameter for exactly this need) instead of
+    forking its own copy of the boilerplate, as auec.py/auwc.py each still
+    do for their own `pol`-scoped equivalent."""
+    if not charges:
         return []
-
-    unique_codes = sorted(dict.fromkeys(code for code, _ in charges))
-    names_line = " and the ".join(f"{CHARGE_CODE_NAMES.get(code, code)}({code})" for code in unique_codes)
-    contents = "\n".join(
-        [
-            f"Rates are valid from {validity_start:%Y%m%d} to {validity_end:%Y%m%d}",
-            f"Rates are inclusive of the {names_line}",
-            "Rates are subject to all other surcharges, including those, if any, specified in "
-            "the contract and those published in the Governing Tariff(s) at the time of shipment.",
-        ]
+    included_codes = [code for code, _ in charges]
+    scope_values = [por for _, por in charges]
+    return build_cmdt_notes(
+        validity_start, validity_end, included_codes,
+        sequential_charge_seq=True,
+        rfa_effective=rfa_effective, rfa_expiry=rfa_expiry,
+        scope_values=scope_values, scope_field="por",
     )
-    parent = CmdtNoteRow(
-        contents=contents, charge_seq=1, code="APP",
-        application_effective=validity_start, application_expires=validity_end, application="S",
-    )
-    child_effective = rfa_effective if rfa_effective is not None else validity_start
-    child_expires = rfa_expiry if rfa_expiry is not None else validity_end
-    children = [
-        CmdtNoteRow(
-            charge_seq=i + 2, code=code, por=por,
-            application_effective=child_effective, application_expires=child_expires, application="I",
-        )
-        for i, (code, por) in enumerate(charges)
-    ]
-    return [parent, *children]
 
 
 def _build_scoped_charge_list(
@@ -538,9 +576,11 @@ class AUBPParser(BaseMRGParser):
             ws = wb[SHEET_MAIN]
             validity_start, validity_end = _parse_validity(ws, 2, 2)
             main_rows = _read_flat_sheet(ws, 6, 84, list(range(5, 16)))
-            for i, group in enumerate(MAIN_COLUMN_GROUPS):
-                dest_col = MAIN_COLUMN_GROUP_DEST_COL[i]
-                dest_text = str(ws.cell(row=ROW4_DEST_ROW, column=dest_col).value or "").strip()
+            for group in MAIN_COLUMN_GROUPS:
+                dest_cell = ws.cell(row=ROW4_DEST_ROW, column=group.dest_col)
+                if is_excluded(dest_cell):
+                    continue
+                dest_text = str(dest_cell.value or "").strip()
                 if dest_text:
                     main_group_dests.append((group, dest_text))
 
@@ -550,7 +590,8 @@ class AUBPParser(BaseMRGParser):
             ws = wb[sheet_name]
             if validity_start is None:
                 validity_start, validity_end = _parse_validity(ws, 2, 2)
-            dest_text = str(ws.cell(row=5, column=POD_COL).value or "").strip()
+            pod_cell = ws.cell(row=5, column=POD_COL)
+            dest_text = "" if is_excluded(pod_cell) else str(pod_cell.value or "").strip()
             rows = _read_flat_sheet(ws, 5, 83, list(range(5, 12)))
             data = SheetRawData(dest_text=dest_text, rows=rows)
             if holder == "syd":
@@ -568,18 +609,27 @@ class AUBPParser(BaseMRGParser):
         )
 
     def _dest_from_codes(self, codes_text: str) -> tuple[str, str] | None:
+        """Resolves whichever of the "/"-joined codes the Location Bank
+        actually has, rather than dropping the WHOLE destination group the
+        moment a single code fails to resolve - a group's other, still-valid
+        destinations shouldn't lose their entire Dry/Reefer/RAD table just
+        because one code (e.g. a renamed/removed AUADL) went missing."""
         codes = sorted({c.strip() for c in codes_text.split("/") if c.strip()})
-        if not codes:
-            return None
-        names = []
+        resolved: list[tuple[str, str]] = []
         for c in codes:
             rec = self.location_store.get_by_code(c)
-            if rec is None:
-                return None
-            names.append(rec.primary_name)
-        return ";".join(codes), ";".join(sorted(names))
+            if rec is not None:
+                resolved.append((c, rec.primary_name))
+        if not resolved:
+            return None
+        codes_out = [c for c, _ in resolved]
+        names_out = sorted(name for _, name in resolved)
+        return ";".join(codes_out), ";".join(names_out)
 
     def _resolve_single_dest(self, text: str) -> tuple[str, str] | None:
+        override = DEST_OVERRIDES.get(text.strip().lower())
+        if override is not None:
+            return override
         m = self.location_resolver.match_token(text)
         if m is None or m.needs_review:
             return None
@@ -599,11 +649,6 @@ class AUBPParser(BaseMRGParser):
         incl_by_origin: dict[str, list[str]] = {}
 
         for parsed, raw_values in raw_rows:
-            resolved = _resolve_origin(parsed.base_text)
-            if resolved is None:
-                continue
-            origin_code, origin_desc = resolved
-
             values: dict[str, float] = {}
             if group.col_20 in raw_values:
                 values["20"] = raw_values[group.col_20]
@@ -613,6 +658,21 @@ class AUBPParser(BaseMRGParser):
                 values["40hc"] = raw_values[group.col_40hc]
             if not values:
                 continue
+
+            resolved = _resolve_origin(parsed.base_text)
+            if resolved is None:
+                # _read_flat_sheet only ever emits a row once it has at
+                # least one real numeric rate somewhere, and `values` above
+                # confirms THIS column-group has real data for it too - so
+                # this is never a legitimate "N/A-rated origin" case (those
+                # never reach here), always a genuine gap in ORIGIN_OVERRIDES/
+                # ICD_CLUSTERS (a renamed or new port) that would otherwise
+                # silently drop real rate data - see module docstring.
+                raise UnrecognizedOriginError(
+                    f"AUBP: origin {parsed.base_text!r} has real rate data but no entry in "
+                    "ORIGIN_OVERRIDES/ICD_CLUSTERS"
+                )
+            origin_code, origin_desc = resolved
 
             if parsed.incl_codes and group.commodity == "MAIN":
                 incl_by_origin.setdefault(origin_code, parsed.incl_codes)
@@ -662,8 +722,7 @@ class AUBPParser(BaseMRGParser):
                 rf_rows.extend(rows)
             else:
                 rad_rows.extend(rows)
-            for code, codes in incl.items():
-                incl_by_origin.setdefault(code, codes)
+            _merge_incl(incl_by_origin, incl)
         return main_rows, rf_rows, rad_rows, incl_by_origin
 
     def to_opus_rows(self, raw: RawExtraction, config: MappingProfile) -> OpusRowSet:
@@ -697,8 +756,7 @@ class AUBPParser(BaseMRGParser):
                     rf_rows.extend(rows)
                 else:
                     rad_rows.extend(rows)
-                for code, codes in incl.items():
-                    incl_by_origin.setdefault(code, codes)
+                _merge_incl(incl_by_origin, incl)
 
         dg_rows: list[RatesRow] = []
         if main_rows and not config.skip_dg_generation.get(DEFAULT_MAIN_DESCRIPTION, False):
