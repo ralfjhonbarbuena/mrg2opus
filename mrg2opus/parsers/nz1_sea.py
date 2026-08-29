@@ -39,6 +39,68 @@ Known, deliberate scope limit: ground truth's own ROUTE NOTE sheet (rnt/
 RNT - Yangon's "(Freight Collect Only)" annotation and the 6 India ICD
 rows' own footnote code lists) is NOT reproduced by this parser - out of
 scope for this pass; only RATES + CMDT NOTE are generated.
+
+TIER 1 ground truth ("NZ1 SEA to NZBP TIER 1", reference folders 43/44)
+looked at first glance like it needed real structural changes: its RATES
+sheet has 3006 rows across 48 distinct CMDT Seq. groups for the same raw
+file that a plain MappingProfile() run produces only 159 rows for, and
+a handful of origins (e.g. KHPNH) carry 8 different rate values across
+those groups. Both turned out to be fully explained without any parser
+change:
+
+1. The 48 groups are NOT a customer-tier schedule. Each group's own CMDT
+   NOTE text ("Rates are valid from <date> to <date>") pins it to one
+   specific half-month validity window - the ground truth workbook is a
+   running historical+future log of every filing OPUS has ever held for
+   this carrier's Oceania Tier-1 program, not just the one matching this
+   MRG. Week 1's file additionally bundles in the *other* Tier-1 lane's
+   own groups (NZJ NEA-to-NZ's G0005/G0006/G0007, alongside this lane's
+   own G0008/G0009/G0010) - confirmed by cross-checking: the NZJ TIER 1
+   ground truth (reference folders 47/48) contains exactly one of those
+   NZJ blocks, byte-identical to the matching block embedded here. Week
+   2's file has no such bundling and only the single current-period
+   block - the accumulation isn't a fixed shape, just whatever OPUS had
+   on file at export time. The correct single block to compare against
+   is the one whose own CMDT NOTE validity dates equal this MRG's own
+   Validity row (row 2) - see tests/test_parsers_nz1_sea.py's TIER1_PAIRS
+   for exactly this filter. Once filtered down, that one block matches
+   this parser's plain-MappingProfile() output field-for-field.
+2. Like AUEC/AUWC's own TIER 1 ground truth, the CMDT NOTE child rows
+   use a separate, longer-lived RFA effective/expiry window (e.g.
+   20260510-20261231) instead of the rate validity window - supplied via
+   config.rfa_effective_date/rfa_expiry_date, same mechanism as every
+   other TIER 1 lane.
+3. TIER 1 filings scope the Chittagong THL charge to POL="BDCGP" (its
+   own port code), not FAK's own POL="BD" (Bangladesh's country code) -
+   confirmed identical across both TIER 1 weeks, and genuinely different
+   from FAK's own confirmed "BD". Detected via the raw title cell's own
+   "- Tier 1" suffix (TIER1_TITLE_KEYWORD/_is_tier1_filing) - present on
+   all 4 real reference files, absent/present exactly where expected -
+   and used to pick between INCLUDED_CHARGES and its TIER 1 counterpart
+   INCLUDED_CHARGES_TIER1.
+
+One separate, genuinely unresolved gap surfaced during this check: TIER
+1's 6 India ICD cluster rows (ICD Delhi, Ahmedabad ICD, Ludhiana
+Cluster, Indore Cluster, Faridabad Cluster, Moradabad Cluster) resolve
+to a DIFFERENT origin identity than in FAK's own ground truth. FAK
+resolves them via the Remark cell's "Via <port>" text (this parser's
+current, confirmed behavior - see _resolve_origin and the ICD test
+below). TIER 1 instead resolves each cluster to its own distinct set of
+specific inland ICD facility codes/descriptions (e.g. "Ludhiana
+Cluster" -> IN1LU;IN2LU;INCWL;INLUH;INSWA, described as "LUDHIANA -
+CHAWAPAIL;LUDHIANA - CONCOR ICD;..."), confirmed identical across both
+TIER 1 reference weeks. The raw sheet's own bottom-of-page definition
+table (rows ~82-87, "Ludhiana Cluster : IN1LU,IN2LU,...") does list
+these same codes for both FAK's and TIER 1's raw files alike - but this
+project's Location Bank does not contain entries for these specific
+inland-facility codes (confirmed: LocationResolver.match_token on each
+one fuzzy-matches to an unrelated port with needs_review=True), so
+their real-world descriptions are not derivable from data this project
+has access to. Rather than guess at descriptions, these 6 rows' TIER 1
+identity is left unreproduced (rate value itself is correct and
+consistent - 1675 in both TIER 1 weeks, matching the raw MRG exactly;
+only the origin code/description differ) - see the TIER1 rates test's
+own exclusion and comment for the precise, verified scope of this gap.
 """
 from __future__ import annotations
 
@@ -92,6 +154,27 @@ INCLUDED_CHARGES: list[tuple[str, str | None]] = [
     ("THL", "BD"),
 ]
 
+# TIER 1 filings scope the Chittagong THL charge to the port code
+# "BDCGP" instead of FAK's own country code "BD" - confirmed identical
+# across both TIER 1 reference weeks (folders 43/44), byte-different from
+# FAK's own confirmed "BD" (folders 41/42). Same non-derivable, per-filing
+# convention category as the FAK/TIER1 India ICD origin difference (see
+# module docstring); the raw MRG gives no signal for which POL grain a
+# given filing type expects, so it's selected by filing type instead.
+INCLUDED_CHARGES_TIER1: list[tuple[str, str | None]] = [
+    ("DOC", "LKCMB"),
+    ("EFS", None),
+    ("ISL", "LKCMB"),
+    ("OBS", None),
+    ("THL", "LKCMB"),
+    ("THL", "BDCGP"),
+]
+
+# "ONE Minimum Rate Guideline SEA to NZ - Tier 1" (TIER 1 filings) vs
+# "ONE Minimum Rate Guideline SEA to NZ" (FAK filings) - confirmed
+# present/absent identically across all 4 real reference files.
+TIER1_TITLE_KEYWORD = "TIER 1"
+
 _VALIDITY_RE = re.compile(r"(\d{1,2})\s+(\w+)\s+(\d{4})\s+to\s+(\d{1,2})\s+(\w+)\s+(\d{4})", re.IGNORECASE)
 _MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
 _TRAILING_PAREN_RE = re.compile(r"\s*\([^)]*\)\s*$")
@@ -130,6 +213,11 @@ def _find_sheet(wb: Workbook) -> Worksheet | None:
     return None
 
 
+def _is_tier1_filing(ws: Worksheet) -> bool:
+    title = str(ws.cell(row=1, column=1).value or "")
+    return TIER1_TITLE_KEYWORD in title.upper()
+
+
 @dataclass
 class OriginRow:
     origin_text: str
@@ -143,6 +231,7 @@ class RawData:
     validity_start: date | None
     validity_end: date | None
     destination_text: str
+    is_tier1: bool = False
     origins: list[OriginRow] = field(default_factory=list)
 
 
@@ -168,10 +257,11 @@ class Nz1SeaParser(BaseMRGParser):
     def parse_raw(self, wb: Workbook) -> RawExtraction:
         ws = _find_sheet(wb)
         if ws is None:
-            return RawExtraction(tables={"data": RawData(None, None, "", [])})
+            return RawExtraction(tables={"data": RawData(None, None, "")})
 
         validity_start, validity_end = _parse_validity(ws)
         destination_text = str(ws.cell(row=POD_ROW, column=POD_COL).value or "")
+        is_tier1 = _is_tier1_filing(ws)
 
         origins: list[OriginRow] = []
         current_country = ""
@@ -203,7 +293,9 @@ class Nz1SeaParser(BaseMRGParser):
                 )
             )
 
-        return RawExtraction(tables={"data": RawData(validity_start, validity_end, destination_text, origins)})
+        return RawExtraction(
+            tables={"data": RawData(validity_start, validity_end, destination_text, is_tier1, origins)}
+        )
 
     def _resolve_origin(self, origin: OriginRow) -> tuple[str, str, str] | None:
         """Returns (origin_code, origin_description, origin_term) or None if
@@ -315,7 +407,8 @@ class Nz1SeaParser(BaseMRGParser):
         if data.validity_start is None or data.validity_end is None:
             return []
         excluded = frozenset(config.excluded_charge_codes)
-        charges = [(c, pol) for c, pol in INCLUDED_CHARGES if c not in excluded]
+        included_charges = INCLUDED_CHARGES_TIER1 if data.is_tier1 else INCLUDED_CHARGES
+        charges = [(c, pol) for c, pol in included_charges if c not in excluded]
         if not charges:
             return []
 
