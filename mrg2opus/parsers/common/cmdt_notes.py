@@ -36,6 +36,7 @@ def build_cmdt_notes(
     excluded_codes: frozenset[str] = frozenset(),
     rfa_effective: date | None = None,
     rfa_expiry: date | None = None,
+    service_lane: str | None = None,
     scope_values: list[str | None] | None = None,
     scope_field: str = "pol",
 ) -> list[CmdtNoteRow]:
@@ -66,6 +67,11 @@ def build_cmdt_notes(
     children are affected. Either left None falls back to
     validity_start/validity_end for that one bound, same as before this
     parameter existed.
+    service_lane: LAEC LUX-specific (confirmed against its own real ground
+    truth) - when set, inserts an extra "Rates are applicable for Vessel
+    Service Lane: {service_lane}" line right after the validity line, and
+    stamps the parent row's own Lane column with the same value. None
+    (default) leaves both untouched, so every other lane is unaffected.
     scope_values/scope_field: for a lane whose child rows carry a per-code
     scope (e.g. AUBP's POR-scoped THL/ISL/DOC - see aubp.py), pass a list
     positionally aligned with included_codes (None for an unscoped/blanket
@@ -89,12 +95,14 @@ def build_cmdt_notes(
         unique_codes = sorted(unique_codes)
     names = {**CHARGE_CODE_NAMES, **(charge_code_names_override or {})}
     names_line = " and the ".join(f"{names.get(code, code)}({code})" for code in unique_codes)
-    lines = [
-        f"Rates are valid from {validity_start:%Y%m%d} to {validity_end:%Y%m%d}",
-        f"Rates are inclusive of the {names_line}",
+    lines = [f"Rates are valid from {validity_start:%Y%m%d} to {validity_end:%Y%m%d}"]
+    if service_lane:
+        lines.append(f"Rates are applicable for Vessel Service Lane: {service_lane}")
+    lines.append(f"Rates are inclusive of the {names_line}")
+    lines.append(
         "Rates are subject to all other surcharges, including those, if any, specified in "
-        "the contract and those published in the Governing Tariff(s) at the time of shipment.",
-    ]
+        "the contract and those published in the Governing Tariff(s) at the time of shipment."
+    )
     contents = "\n".join(lines)
 
     parent = CmdtNoteRow(
@@ -104,6 +112,7 @@ def build_cmdt_notes(
         application_effective=validity_start,
         application_expires=validity_end,
         application="S",
+        lane=service_lane,
     )
     child_effective = rfa_effective if rfa_effective is not None else validity_start
     child_expires = rfa_expiry if rfa_expiry is not None else validity_end

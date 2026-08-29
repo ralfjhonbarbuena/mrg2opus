@@ -134,8 +134,9 @@ def build_laec_freetime(variant: str, validity_start: date | None, validity_end:
     against the more-authoritative "TRADE_s copy" ground-truth files (a
     stale duplicate lacking "TRADE_s copy" in one FAK folder shows a
     long-lived 2025-01-01/2026-09-30 window instead - not used as the
-    source of truth here). Unlike LAWC, LAEC's own Seq column is always
-    blank - not populated here either. TIER 1's real ground truth also
+    source of truth here). Unlike LAWC, FAK/TIER1's own Seq column is
+    always blank - not populated here either (LUX's own Seq column IS
+    populated 1..8 - see below). TIER 1's real ground truth also
     lists these same rows in a different block order (Dry-Dangerous
     "Reefer as..." variant first, alphabetized by LOC within each block) -
     a cosmetic filer artifact with no derivable rule, so this returns FAK's
@@ -145,9 +146,15 @@ def build_laec_freetime(variant: str, validity_start: date | None, validity_end:
     if validity_start is None or validity_end is None:
         return []
     if variant == "lux":
+        # Unlike FAK/TIER1 (Seq always blank), LUX's real ground truth
+        # populates Seq 1..8 in row order - confirmed identically across
+        # both real samples seen.
         return [
-            FreetimeRow(cntr_cargo=cargo, coverage_cn=cn, free_time_total=total, eff_dt=validity_start, exp_dt=validity_end, **_LAEC_SHARED)
-            for cargo, cn, total in _LAEC_LUX_ROWS
+            FreetimeRow(
+                seq=i, cntr_cargo=cargo, coverage_cn=cn, free_time_total=total,
+                origin_or_dest_ct="A", eff_dt=validity_start, exp_dt=validity_end, **_LAEC_SHARED,
+            )
+            for i, (cargo, cn, total) in enumerate(_LAEC_LUX_ROWS, start=1)
         ]
 
     rows = list(_LAEC_BASE_ROWS)
