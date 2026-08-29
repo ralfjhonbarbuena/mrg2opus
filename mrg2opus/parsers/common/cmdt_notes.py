@@ -36,6 +36,8 @@ def build_cmdt_notes(
     excluded_codes: frozenset[str] = frozenset(),
     rfa_effective: date | None = None,
     rfa_expiry: date | None = None,
+    scope_values: list[str | None] | None = None,
+    scope_field: str = "pol",
 ) -> list[CmdtNoteRow]:
     """sequential_charge_seq: SAF's ground truth leaves child rows' Charge Seq
     blank (only the parent gets 1); EAF's numbers every row 1, 2, 3, ...
@@ -63,9 +65,17 @@ def build_cmdt_notes(
     row always keeps the weekly validity window regardless - only
     children are affected. Either left None falls back to
     validity_start/validity_end for that one bound, same as before this
-    parameter existed."""
+    parameter existed.
+    scope_values/scope_field: for a lane whose child rows carry a per-code
+    scope (e.g. AUBP's POR-scoped THL/ISL/DOC - see aubp.py), pass a list
+    positionally aligned with included_codes (None for an unscoped/blanket
+    code) plus which CmdtNoteRow field to stamp it on ("por" or "pol").
+    Left as None by default - every existing caller is unaffected."""
     if excluded_codes:
-        included_codes = [c for c in included_codes if c not in excluded_codes]
+        keep = [c not in excluded_codes for c in included_codes]
+        if scope_values is not None:
+            scope_values = [v for v, k in zip(scope_values, keep) if k]
+        included_codes = [c for c, k in zip(included_codes, keep) if k]
     if not included_codes or validity_start is None or validity_end is None:
         return []
 
@@ -104,6 +114,7 @@ def build_cmdt_notes(
             application_effective=child_effective,
             application_expires=child_expires,
             application="I",
+            **({scope_field: scope_values[i]} if scope_values is not None else {}),
         )
         for i, code in enumerate(included_codes)
     ]
