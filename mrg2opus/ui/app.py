@@ -13,7 +13,9 @@ import streamlit as st
 
 # Importing the lane modules registers their LayoutProfile as a side effect -
 # same requirement as cli.py.
-from mrg2opus.parsers import aubp, auec, auwc, cse, eaf, laec, lawc, nz1_sea, nzj, saf, tad_oew_omw, waf, west_asia_waf  # noqa: F401
+from mrg2opus.parsers import (  # noqa: F401
+    aubp, auec, auwc, cse, eaf, laec, lawc, nz1_sea, nzj, saf, tad_oew_omw, tad_wmw_wew, waf, west_asia_waf,
+)
 from mrg2opus.ui import compare_page
 from mrg2opus.ui.state import get_state
 from mrg2opus.ui.steps import step1_upload, step2_preview, step3_customize, step4_export
