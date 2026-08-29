@@ -13,4 +13,8 @@ KNOWN_ALIASES: dict[str, str] = {
     "Busan": "KRPUS",  # raw MRG spelling vs. mined name "PUSAN" (older romanization)
     "Lakbang": "THLKR",  # raw MRG spelling vs. mined name "LAT KRABANG"
     "HoChiMing": "VNSGN",  # EAF KEMBA raw sheet typo for "HoChiMinh" (Ho Chi Minh City)
+    # NZ1 SEA raw sheet's own "Kolkata / Calcutta" combined label - "Calcutta"
+    # alone fuzzy-matches an unrelated location (score 62.5, needs_review)
+    # since it isn't a substring of mined primary name "KOLKATA".
+    "Calcutta": "INCCU",
 }
