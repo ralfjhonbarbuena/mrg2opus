@@ -636,5 +636,5 @@ CHARGE_CODE_NAMES = {**_TAD_TOOL_CHARGE_CODE_NAMES, **CHARGE_CODE_NAMES}
 # that human-only SOP exclusion. Confirmed via reference/2_OPUS/7_EAF-KEMBA
 # and 8_EAF-KEMBA, both of which do include it.
 INDIVIDUAL_CHARGE_CODES: frozenset[str] = frozenset(
-    {"BAF", "EFS", "MBS", "OBS", "HEA", "LSF", "PSS", "THL", "CSS", "SLF", "CGD", "EPH", "ISL"}
+    {"BAF", "EFS", "MBS", "OBS", "HEA", "LSF", "PSS", "THL", "CSS", "SLF", "CGD", "EPH", "ISL", "AMS"}
 )

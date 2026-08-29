@@ -1,0 +1,13 @@
+# West Asia to West Africa lane: single dry FAK grid, D2/D4/D5 map
+# positionally to OPUS rate slots 20/40/40HC. Every DR row also files an
+# identical D/DG duplicate at the same rate (see west_asia_waf.py),
+# confirmed against reference/2_OPUS/11_West Asia to West Africa and
+# 12_West Asia to West Africa (100% consistent across both weekly
+# ground-truth files: same rate, only CGO TYPE and commodity group flip
+# DR->DG) - same convention as the West Africa WAF lane's own grid.
+prefix: D
+cgo_type: DR
+containers:
+  D2: "20"
+  D4: "40"
+  D5: "40hc"
