@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import openpyxl
@@ -205,3 +206,65 @@ def test_aubp_skip_dg_generation():
     main_cgo = {r.cgo_type for r in row_set.rates if r.commodity_group_description == DEFAULT_MAIN_DESCRIPTION}
     assert "DG" not in main_cgo
     assert "DR" in main_cgo
+
+
+# AUS SEA to AUBP TIER 1 - same parser, no new lane_id needed. RATES match
+# exactly (0 missing/extra/mismatched) once the SYD/FRE sheets' own header
+# row is located dynamically rather than assumed at a fixed row number -
+# TIER 1's real raw file has an extra blank row above that header that
+# FAK's doesn't (confirmed both TIER 1 weeks), which used to make the
+# whole SYD/FRE sheet's own destination resolution fail silently and drop
+# every row on both sheets. CMDT NOTE (SUR) needs the RFA effective/expiry
+# override wired through (each week uses its own distinct, longer-lived
+# RFA window - not derivable from the raw MRG, same as every other lane's
+# RFA feature) plus content-only comparison (charge-code order differs
+# from FAK's own, a genuine per-filing difference, not a parsing gap).
+TIER1_PAIRS = [
+    (
+        REFERENCE_DIR / "1_MRGs" / "31_AUS SEA to AUBP TIER 1" / "ONE SEA to AU MRG 20260901 to 20260914 - Tier 1 (24 AUG 2026).xlsx",
+        REFERENCE_DIR / "2_OPUS" / "31_AUS SEA to AUBP TIER 1" / "ONE SEA to AU MRG 20260901 to 20260914 - Tier 1 (24 AUG 2026)_OPUS.xlsx",
+        date(2026, 5, 26), date(2026, 12, 31),
+    ),
+    (
+        REFERENCE_DIR / "1_MRGs" / "32_AUS SEA to AUBP TIER 1" / "ONE SEA to AU MRG 20260815 to 20260831 - Tier 1 (07 AUG 2026).xlsx",
+        REFERENCE_DIR / "2_OPUS" / "32_AUS SEA to AUBP TIER 1" / "ONE SEA to AU MRG 20260815 to 20260831 - Tier 1 (07 AUG 2026)_OPUS.xlsx",
+        date(2026, 5, 10), date(2026, 12, 31),
+    ),
+]
+
+
+@pytest.mark.parametrize("raw_path,opus_path,rfa_eff,rfa_exp", TIER1_PAIRS)
+def test_aubp_tier1_rates_matches_ground_truth(raw_path, opus_path, rfa_eff, rfa_exp):
+    if not raw_path.exists() or not opus_path.exists():
+        pytest.skip("reference/ ground-truth files not present in this checkout")
+    wb = openpyxl.load_workbook(raw_path, data_only=True)
+    row_set = AUBPParser().run(wb, MappingProfile(rfa_effective_date=rfa_eff, rfa_expiry_date=rfa_exp))
+    generated = [r.model_dump() for r in row_set.rates]
+
+    ref_wb = openpyxl.load_workbook(opus_path, data_only=True, read_only=True)
+    expected = read_rates_sheet(ref_wb, "RATES")
+
+    result = diff_by_key(generated, expected, key_fn=rates_row_key, fields=cols.RATES_ROW_FIELDS, ignore_fields=RATES_IGNORE_FIELDS)
+    assert not result.missing, f"missing {len(result.missing)} expected rows, e.g. {list(result.missing)[:5]}"
+    assert not result.extra, f"{len(result.extra)} unexpected generated rows, e.g. {list(result.extra)[:5]}"
+    assert not result.field_mismatches, f"{len(result.field_mismatches)} field mismatches, e.g. {result.field_mismatches[:10]}"
+
+
+@pytest.mark.parametrize("raw_path,opus_path,rfa_eff,rfa_exp", TIER1_PAIRS)
+def test_aubp_tier1_cmdt_note_matches_ground_truth_by_content(raw_path, opus_path, rfa_eff, rfa_exp):
+    if not raw_path.exists() or not opus_path.exists():
+        pytest.skip("reference/ ground-truth files not present in this checkout")
+    wb = openpyxl.load_workbook(raw_path, data_only=True)
+    row_set = AUBPParser().run(wb, MappingProfile(rfa_effective_date=rfa_eff, rfa_expiry_date=rfa_exp))
+    generated = [n.model_dump() for n in row_set.cmdt_notes]
+
+    ref_wb = openpyxl.load_workbook(opus_path, data_only=True, read_only=True)
+    expected = read_cmdt_note_sheet(ref_wb, "SUR")
+
+    ignore = {"header_seq", "note_seq", "charge_seq"}
+
+    def key(row):
+        return tuple(_normalize(row.get(f)) for f in cols.CMDT_NOTE_ROW_FIELDS if f not in ignore)
+
+    assert len(generated) == len(expected)
+    assert {key(g) for g in generated} == {key(e) for e in expected}

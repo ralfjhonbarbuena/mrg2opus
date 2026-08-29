@@ -2,22 +2,29 @@
 lane parser.
 
 Three raw sheets, all flat row-per-origin tables (NOT a POD-header grid like
-AUEC/AUWC) sharing the same 83-origin list (rows 6-84 on the main sheet,
-5-87 on the other two - see DATA_MIN_ROW/DATA_MAX_ROW per sheet):
+AUEC/AUWC) sharing the same ~83-origin list:
   - "ex SEA to MEL BNE ADL": destinations Brisbane/Melbourne/Adelaide, split
     across 5 column-groups (Dry applies to all 3; Reefer and RAD each split
     into a BNE/MEL-only pair of columns and an ADL-only pair) - row 4 gives
     the actual destination CODE(s) for each column-group directly (e.g.
     "AUBNE/AUMEL/AUADL"), so destinations need only a "/"-split, never
-    fuzzy Location Bank matching.
+    fuzzy Location Bank matching. Header row is fixed at row 3 in every
+    real file seen (FAK and TIER 1 both) - rows 6-84 hold the 79-row
+    origin list.
   - "ex SEA to SYD" / "ex SEA to FRE": single destination per sheet (POD
     column reads "Sydney"/"Fremantle" on every row - resolved once via the
     Location Bank, same as AUEC's own POD-label pattern), Dry/Reefer/RAD in
-    3 simple column pairs each.
+    3 simple column pairs each. UNLIKE the main sheet, these two sheets'
+    own header row is NOT at a fixed row number - confirmed row 3 in FAK's
+    real ground truth but row 4 in TIER 1's (an extra blank row above it) -
+    so _find_header_row() locates it by content instead, and the 79-row
+    origin-list span (SYD_FRE_DATA_ROW_SPAN) is read relative to wherever
+    that header actually is.
 
 Output scope is RATES + SUR (the already-known CMDT-NOTE naming drift, see
 project-opus-note-sheet-taxonomy memory), confirmed against both real
-reference weeks (folders 29, 30).
+FAK reference weeks (folders 29, 30) and both real TIER 1 reference weeks
+(folders 31, 32 - same parser, no separate lane_id needed).
 
 **Commodity groups**: 3 distinct, NOT folded together - confirmed via
 ground truth's own (cmdt_seq, code, description) tuple counts, matching
@@ -152,6 +159,16 @@ SHEET_FRE = "ex SEA to FRE"
 ORIGIN_COL = 2
 POD_COL = 3
 ROW4_DEST_ROW = 4
+HEADER_ROW_LABEL = "Origin Country"
+HEADER_SEARCH_MAX_ROW = 10
+# Row count from the header row to the last real origin row, inclusive of
+# the 2 rows in between (container-type/units) - confirmed identical
+# (79 rows) in both FAK (header row 3) and TIER 1 (header row 4) real
+# ground truth for the SYD/FRE sheets, which is why this is expressed as
+# an offset from the found header row rather than an absolute row number
+# (see _find_header_row) - TIER 1's raw file has an extra blank row above
+# the header that FAK's doesn't, shifting everything down by exactly 1.
+SYD_FRE_DATA_ROW_SPAN = 79
 
 DEFAULT_MAIN_DESCRIPTION = "FAK - SEA"
 DEFAULT_MAIN_CODE = "G0001"
@@ -482,6 +499,18 @@ class AUBPRawData:
     fre: SheetRawData | None = None
 
 
+def _find_header_row(ws: Worksheet) -> int | None:
+    """Locates the SYD/FRE sheets' own column-header row (Origin Country /
+    POR / POD / Service / ...) by content rather than a hardcoded row
+    number - confirmed real ground truth has this at row 3 for FAK's own
+    sheets but row 4 for TIER 1's (an extra blank row above it), so a
+    fixed row number silently breaks one of the two."""
+    for row_idx in range(1, HEADER_SEARCH_MAX_ROW + 1):
+        if str(ws.cell(row=row_idx, column=1).value or "").strip() == HEADER_ROW_LABEL:
+            return row_idx
+    return None
+
+
 def _read_flat_sheet(ws: Worksheet, min_row: int, max_row: int, rate_cols: list[int]) -> list[tuple[ParsedOrigin, dict[int, float]]]:
     rows: list[tuple[ParsedOrigin, dict[int, float]]] = []
     for row_idx in range(min_row, max_row + 1):
@@ -590,9 +619,14 @@ class AUBPParser(BaseMRGParser):
             ws = wb[sheet_name]
             if validity_start is None:
                 validity_start, validity_end = _parse_validity(ws, 2, 2)
-            pod_cell = ws.cell(row=5, column=POD_COL)
+            header_row = _find_header_row(ws)
+            if header_row is None:
+                continue
+            data_min_row = header_row + 2
+            data_max_row = data_min_row + SYD_FRE_DATA_ROW_SPAN - 1
+            pod_cell = ws.cell(row=data_min_row, column=POD_COL)
             dest_text = "" if is_excluded(pod_cell) else str(pod_cell.value or "").strip()
-            rows = _read_flat_sheet(ws, 5, 83, list(range(5, 12)))
+            rows = _read_flat_sheet(ws, data_min_row, data_max_row, list(range(5, 12)))
             data = SheetRawData(dest_text=dest_text, rows=rows)
             if holder == "syd":
                 syd = data
