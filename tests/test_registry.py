@@ -6,7 +6,7 @@ import openpyxl
 import pytest
 
 # Import every lane module so their LayoutProfiles are registered.
-from mrg2opus.parsers import auec, auwc, cse, eaf, laec, lawc, nzj, saf, tad_oew_omw, waf, west_asia_waf  # noqa: F401
+from mrg2opus.parsers import aubp, auec, auwc, cse, eaf, laec, lawc, nzj, saf, tad_oew_omw, waf, west_asia_waf  # noqa: F401
 from mrg2opus.parsers.registry import all_profiles, classify, classify_all, get_profile
 
 REFERENCE_DIR = Path(__file__).resolve().parents[1] / "reference"
@@ -14,11 +14,18 @@ REFERENCE_DIR = Path(__file__).resolve().parents[1] / "reference"
 # All lanes are still registered parsers even though SAF has no real
 # reference/ file to classify against (see feedback-reference-folder-
 # convention memory) - SAMPLES only covers the lanes that do.
-ALL_LANE_IDS = {"SAF", "EAF", "CSE", "LAEC", "LAWC", "WAF", "AUEC", "AUWC", "TAD-OEW-OMW", "WEST-ASIA-WAF", "NZJ"}
+ALL_LANE_IDS = {
+    "SAF", "EAF", "CSE", "LAEC", "LAEC-LUX", "LAWC", "WAF", "AUEC", "AUWC",
+    "TAD-OEW-OMW", "WEST-ASIA-WAF", "AUBP", "NZJ",
+}
 SAMPLES = {
     "EAF": REFERENCE_DIR / "1_MRGs" / "5_EAF-TZDAR" / "Asia EAF rate guideline TZDAR 19 Aug to 25 Aug 26 (14 Aug updated).xlsx",
     "CSE": REFERENCE_DIR / "1_MRGs" / "1_CSE FAK, CSE FAK FOR VELAG AND VEPBL" / "CSE Pricing Guideline (15-21  AUG 2026 ) FAK.xlsx",
     "LAEC": REFERENCE_DIR / "1_MRGs" / "19_LAEC FAK" / "LAEC Pricing Guideline - CN (20260901-20260907) (FAK) _ IN (20260901-20260907).xlsx",
+    "LAEC-LUX": (
+        REFERENCE_DIR / "1_MRGs" / "49_LAEC LUX"
+        / "LAEC Pricing Guideline - (20260815-20260831-IN) (FAK) for via LUX Service.xlsx"
+    ),
     "LAWC": (
         REFERENCE_DIR / "1_MRGs" / "15_LAWC FAK"
         / "20260812_MRG guideline template China_HKG_SIN_TWN_KR (15-21 Aug) and SEA ISC (15-31 Aug)_FAK (1).xlsx"
@@ -42,6 +49,10 @@ SAMPLES = {
     "WEST-ASIA-WAF": (
         REFERENCE_DIR / "1_MRGs" / "11_West Asia to West Africa"
         / "WEST Asia WAF MRG Rate (AIM)  (1 - 14 Aug  2026).xlsx"
+    ),
+    "AUBP": (
+        REFERENCE_DIR / "1_MRGs" / "29_AUS SEA to AUBP FAK"
+        / "ONE SEA to AU MRG 20260901 to 20260914 (24 AUG 2026).xlsx"
     ),
     "NZJ": (
         REFERENCE_DIR / "1_MRGs" / "45_NZJ NEA to NZ FAK"
