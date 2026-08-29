@@ -53,6 +53,22 @@ This parser keeps one fixed order (matching week 1's text exactly, and
 both weeks' child rows), same accepted-gap category as
 west_asia_waf.py's own documented text-ordering inconsistency.
 
+TIER 1 (folders 47/48): unlike LAEC's own TIER 1 (raw file textually
+identical to FAK, no signal to detect it by), this lane's TIER 1 raw
+workbook carries an extra "T-1 Customer list" sheet (a customer roster,
+confirmed present in both TIER 1 weeks, absent from both FAK weeks) - a
+reliable detection signal, see TIER1_SHEET_NAME/NZJRawData.is_tier1.
+TIER 1's own ground truth CMDT NOTE differs from FAK's in 3 confirmed
+ways: (1) an extra "Rates are applicable for Vessel Service Lane: NZJ"
+text line (see common/cmdt_notes.py's service_lane parameter), (2) the
+"inclusive of" text alphabetizes (EFS, ISL, OBS) instead of FAK's fixed
+order, (3) ISL is scoped via POR instead of POL for the identical
+business rule - the same FAK-uses-POL/TIER1-switches-to-POR convention
+already confirmed for AUEC/AUWC/AUBP. TIER 1's RATES sheet also has an
+unexplained, non-derivable duplication in one of the two weeks (6
+header_seq groups repeating the same 159-row content) - same accepted-gap
+category as AUEC TIER 1's own note-block duplication, not chased further.
+
 Output scope is RATES + CMDT NOTE only (ground truth's own sheet names
 drift between weeks - 'rates'/'SUR' in week 1, 'RATES'/'SURCHARGE' in
 week 2 - no Route Note, no ARBS, no Special Note in either week).
@@ -78,6 +94,14 @@ from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema.opus_rows import CmdtNoteRow, OpusRowSet, RatesRow
 
 SHEET_NAME = "Ex. NEA to NZ"
+# Present only in real TIER 1 raw files (a customer roster, absent from
+# FAK's own) - confirmed a reliable, consistent signal across both TIER 1
+# reference weeks (unlike some other lanes, where FAK/TIER1 raw files are
+# textually indistinguishable). TIER 1's own CMDT NOTE ground truth adds a
+# "Vessel Service Lane: NZJ" line and alphabetizes the "inclusive of" text
+# (FAK's own stays un-alphabetized, matching INCLUDED_CHARGE_CODES' own
+# order) - confirmed in both TIER 1 weeks.
+TIER1_SHEET_NAME = "T-1 Customer list"
 
 DATA_MIN_ROW, DATA_MAX_ROW = 8, 56
 ORIGIN_COL = 3
@@ -173,9 +197,10 @@ class NZJRawData:
     lnt_pod_text: str
     combined_pod_text: str
     origins: list[OriginRow] = field(default_factory=list)
+    is_tier1: bool = False
 
 
-def _read_sheet(ws: Worksheet) -> NZJRawData:
+def _read_sheet(ws: Worksheet, is_tier1: bool = False) -> NZJRawData:
     validity_start, validity_end = _parse_validity(ws)
     akl_pod_text = str(ws.cell(row=POD_LABEL_ROW, column=AKL_POD_COL).value or "").strip()
     lnt_pod_text = str(ws.cell(row=POD_LABEL_ROW, column=LNT_POD_COL).value or "").strip()
@@ -208,6 +233,7 @@ def _read_sheet(ws: Worksheet) -> NZJRawData:
         lnt_pod_text=lnt_pod_text,
         combined_pod_text=combined_pod_text,
         origins=origins,
+        is_tier1=is_tier1,
     )
 
 
@@ -231,7 +257,7 @@ class NZJParser(BaseMRGParser):
     def parse_raw(self, wb: Workbook) -> RawExtraction:
         if SHEET_NAME not in wb.sheetnames:
             return RawExtraction(tables={})
-        data = _read_sheet(wb[SHEET_NAME])
+        data = _read_sheet(wb[SHEET_NAME], is_tier1=TIER1_SHEET_NAME in wb.sheetnames)
         return RawExtraction(tables={"nzj": data})
 
     def _resolve_destination(self, label_text: str) -> tuple[str, str] | None:
@@ -406,11 +432,17 @@ class NZJParser(BaseMRGParser):
         included_codes = [c for c in INCLUDED_CHARGE_CODES if c not in excluded_codes]
         cmdt_notes: list[CmdtNoteRow] = build_cmdt_notes(
             data.validity_start, data.validity_end, included_codes,
-            sequential_charge_seq=True, sort_text_names=False,
+            sequential_charge_seq=True, sort_text_names=data.is_tier1,
             rfa_effective=config.rfa_effective_date, rfa_expiry=config.rfa_expiry_date,
+            service_lane="NZJ" if data.is_tier1 else None,
         )
+        # TIER 1's own ground truth scopes ISL via POR instead of POL for
+        # the identical business rule (confirmed both TIER 1 weeks) - the
+        # same FAK-uses-POL/TIER1-switches-to-POR convention already seen
+        # in AUEC/AUWC/AUBP.
+        isl_scope_field = "por" if data.is_tier1 else "pol"
         cmdt_notes = [
-            row.model_copy(update={"group_description": description, "pol": ISL_SCOPE_POL})
+            row.model_copy(update={"group_description": description, isl_scope_field: ISL_SCOPE_POL})
             if row.code == "ISL"
             else row.model_copy(update={"group_description": description})
             for row in cmdt_notes

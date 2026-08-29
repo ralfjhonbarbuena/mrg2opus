@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from pathlib import Path
 
 import openpyxl
@@ -205,3 +206,72 @@ def test_nzj_skip_dg_generation():
     row_set = NZJParser().run(wb, MappingProfile(skip_dg_generation={DEFAULT_DESCRIPTION: True}))
     assert "DG" not in {r.cgo_type for r in row_set.rates}
     assert "DR" in {r.cgo_type for r in row_set.rates}
+
+
+# NZJ NEA to NZ TIER 1 - same parser, detected via a reliable raw-file
+# signal (the "T-1 Customer list" sheet, present in both TIER 1 weeks and
+# absent from both FAK weeks - unlike some other lanes where FAK/TIER1 raw
+# files are textually indistinguishable). TIER 1's own CMDT NOTE ground
+# truth adds a "Vessel Service Lane: NZJ" text line, alphabetizes the
+# "inclusive of" list (FAK's own stays in INCLUDED_CHARGE_CODES' fixed
+# order), and scopes ISL via POR instead of POL (same FAK-uses-POL/
+# TIER1-switches-to-POR convention already confirmed for AUEC/AUWC/AUBP).
+# Week 2's RATES sheet also has an unexplained, non-derivable duplication
+# (6 header_seq groups repeating the same 159-row content, expanding 218
+# generated rows into 377 ground-truth rows) - same accepted-gap category
+# as AUEC TIER 1's own note-block duplication, verified by content
+# subset rather than exact row count.
+TIER1_PAIRS = [
+    (
+        REFERENCE_DIR / "1_MRGs" / "47_NZJ NEA to NZ TIER 1" / "ONE NZ MRG 20260815 to 20260831 - ex NEA Tier 1 (07 August 2026).xlsx",
+        REFERENCE_DIR / "2_OPUS" / "47_NZJ NEA to NZ TIER 1" / "NEA TO NZ 15 TO 31.xlsx",
+        date(2026, 5, 9), date(2026, 12, 31),
+    ),
+    (
+        REFERENCE_DIR / "1_MRGs" / "48_NZJ NEA to NZ TIER 1" / "ONE NZ MRG 20260901 to 20260914 - ex NEA Tier 1 (20 Aug 2026).xlsx",
+        REFERENCE_DIR / "2_OPUS" / "48_NZJ NEA to NZ TIER 1" / "NEA TO NZ 1 TO 14.xlsx",
+        date(2026, 5, 23), date(2026, 12, 31),
+    ),
+]
+
+
+@pytest.mark.parametrize("raw_path,opus_path,rfa_eff,rfa_exp", TIER1_PAIRS)
+def test_nzj_tier1_rates_matches_ground_truth_by_content(raw_path, opus_path, rfa_eff, rfa_exp):
+    if not raw_path.exists() or not opus_path.exists():
+        pytest.skip("reference/ ground-truth files not present in this checkout")
+    wb = openpyxl.load_workbook(raw_path, data_only=True)
+    row_set = NZJParser().run(wb, MappingProfile(rfa_effective_date=rfa_eff, rfa_expiry_date=rfa_exp))
+    generated = [r.model_dump() for r in row_set.rates]
+
+    ref_wb = openpyxl.load_workbook(opus_path, data_only=True, read_only=True)
+    expected = read_rates_sheet(ref_wb, "RATES")
+
+    def key(row):
+        return tuple(_normalize(row.get(f)) for f in cols.RATES_ROW_FIELDS if f not in RATES_IGNORE_FIELDS)
+
+    gen_keys = {key(r) for r in generated}
+    exp_keys = {key(r) for r in expected}
+    missing = gen_keys - exp_keys
+    assert not missing, f"generated rows with no match in ground truth: {list(missing)[:5]}"
+
+
+@pytest.mark.parametrize("raw_path,opus_path,rfa_eff,rfa_exp", TIER1_PAIRS)
+def test_nzj_tier1_cmdt_note_matches_ground_truth_by_content(raw_path, opus_path, rfa_eff, rfa_exp):
+    if not raw_path.exists() or not opus_path.exists():
+        pytest.skip("reference/ ground-truth files not present in this checkout")
+    wb = openpyxl.load_workbook(raw_path, data_only=True)
+    row_set = NZJParser().run(wb, MappingProfile(rfa_effective_date=rfa_eff, rfa_expiry_date=rfa_exp))
+    generated = [n.model_dump() for n in row_set.cmdt_notes]
+
+    ref_wb = openpyxl.load_workbook(opus_path, data_only=True, read_only=True)
+    expected = read_cmdt_note_sheet(ref_wb, "SRCHG")
+
+    ignore = {"header_seq", "note_seq", "charge_seq"}
+
+    def key(row):
+        return tuple(_normalize(row.get(f)) for f in cols.CMDT_NOTE_ROW_FIELDS if f not in ignore)
+
+    gen_keys = {key(n) for n in generated}
+    exp_keys = {key(n) for n in expected}
+    assert gen_keys <= exp_keys, f"generated rows with no match in ground truth: {list(gen_keys - exp_keys)[:5]}"
+    assert len(gen_keys) == len(exp_keys) == 4
