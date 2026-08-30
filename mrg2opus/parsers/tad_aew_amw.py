@@ -455,18 +455,6 @@ class TADAewAmwParser(BaseMRGParser):
         },
     }
 
-    @classmethod
-    def detect(cls, wb: Workbook) -> float:
-        names = set(wb.sheetnames)
-        if not ({SHEET_AEW, SHEET_AMW} & names):
-            return 0.0
-        score = 0.5 * len({SHEET_AEW, SHEET_AMW} & names)
-        ws = wb[SHEET_AEW] if SHEET_AEW in names else wb[SHEET_AMW]
-        header_tokens = {str(ws.cell(row=1, column=c).value or "").strip() for c in range(1, 23)}
-        if "Include Surcharge" in header_tokens and "DEL Description" in header_tokens:
-            score = min(score + 0.3, 1.0)
-        return score
-
     def parse_raw(self, wb: Workbook) -> RawExtraction:
         scopes: dict[str, ScopeData] = {}
         # Origin ARBS is byte-identical across snapshot occurrences (no

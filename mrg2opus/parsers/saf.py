@@ -62,20 +62,6 @@ class SAFParser(BaseMRGParser):
         self.container_map = container_map or load_container_map("saf")
         self.location_resolver = location_resolver or LocationResolver()
 
-    @classmethod
-    def detect(cls, wb: Workbook) -> float:
-        if RAW_SHEET_NAME not in wb.sheetnames:
-            return 0.0
-        score = 0.5
-        ws = wb[RAW_SHEET_NAME]
-        title = str(ws.cell(row=1, column=1).value or "")
-        if "SAF" in title.upper():
-            score += 0.3
-        header_tokens = {ws.cell(row=CONTAINER_LABEL_ROW, column=c).value for c in range(MIN_COL, MAX_COL + 1)}
-        if {"D2", "D4", "D5", "RD5"} <= {str(t).strip() for t in header_tokens if t}:
-            score += 0.2
-        return min(score, 1.0)
-
     def parse_raw(self, wb: Workbook) -> RawExtraction:
         ws: Worksheet = wb[RAW_SHEET_NAME]
 

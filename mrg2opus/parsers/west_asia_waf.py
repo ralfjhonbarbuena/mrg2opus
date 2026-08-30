@@ -22,8 +22,9 @@ block (same "extra child row per origin" pattern as AUEC/AUWC's own
 POL-scoped surcharges), not a second commodity group.
 
 Real filings seen use TWO different raw sheet names for the same shape
-("WAF" and "West Asia - West Africa") - detect() matches on title text
-rather than a fixed sheet name for this reason.
+("WAF" and "West Asia - West Africa") - _find_sheet() locates the sheet
+by its title text rather than a fixed name for this reason, and the
+registered LayoutProfile matches on title keywords too.
 
 Known, accepted gap: the "inclusive of" child rows are filed alphabetized
 (confirmed against the first week's ground truth), but the SECOND week's
@@ -161,19 +162,6 @@ class WestAsiaWAFParser(BaseMRGParser):
     def __init__(self, container_map: ContainerMap | None = None, location_store: LocationBankStore | None = None):
         self.container_map = container_map or load_container_map("west_asia_waf")
         self.location_store = location_store or LocationBankStore()
-
-    @classmethod
-    def detect(cls, wb: Workbook) -> float:
-        ws = _find_sheet(wb)
-        if ws is None:
-            return 0.0
-        score = 0.5
-        header_tokens = {str(ws.cell(row=CONTAINER_LABEL_ROW, column=c).value or "").strip() for c in range(MIN_COL, MAX_COL + 1)}
-        if {"D2", "D4", "D5"} <= header_tokens:
-            score += 0.3
-        if str(ws.cell(row=POD_LABEL_ROW, column=ORIGIN_CODE_COL + 2).value or "").upper().startswith("POD:"):
-            score += 0.2
-        return min(score, 1.0)
 
     def _lookup_description(self, code: str) -> str | None:
         rec = self.location_store.get_by_code(code)

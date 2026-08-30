@@ -18,8 +18,8 @@ than TAD's "ROUTE NOTE" - unverified either way for this lane.
 The WEST AFRICA sheet is byte-for-byte the same layout as the already-built
 WEST-ASIA-WAF lane (same title text "West Asia WAF FAK rate guideline",
 same 8-POD x D2/D4/D5 grid) - confirmed by running WestAsiaWAFParser
-directly against this workbook (detect() scores 1.0, produces 204 sensible
-rate rows) - so that sheet is handled by reusing WestAsiaWAFParser as-is,
+directly against this workbook (it classifies at 1.0 and produces 204
+sensible rate rows) - so that sheet is handled by reusing WestAsiaWAFParser as-is,
 not reimplemented here.
 
 SOUTH AFRICA, EAST AFRICA, and MOZAMBIQUE are a genuinely different,
@@ -368,10 +368,6 @@ class WestAsiaMultiParser(BaseMRGParser):
         self.container_map = container_map or load_container_map("west_asia_waf")
         self.location_store = location_store or LocationBankStore()
         self.location_resolver = location_resolver or LocationResolver()
-
-    @classmethod
-    def detect(cls, wb: Workbook) -> float:
-        return 1.0 if {SHEET_SAF, SHEET_EAF, SHEET_MZ} & set(wb.sheetnames) else 0.0
 
     def parse_raw(self, wb: Workbook) -> RawExtraction:
         tables: dict[str, FlatRawData] = {}

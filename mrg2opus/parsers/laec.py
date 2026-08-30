@@ -191,23 +191,6 @@ class LAECParser(BaseMRGParser):
         self.location_store = location_store or LocationBankStore()
         self.group_codes = load_group_codes("laec")
 
-    @classmethod
-    def detect(cls, wb: Workbook) -> float:
-        if RAW_SHEET_DRY not in wb.sheetnames:
-            return 0.0
-        ws = wb[RAW_SHEET_DRY]
-        title = str(ws.cell(row=1, column=1).value or "")
-        if "LUX" in title.upper():
-            # LAEC LUX variant - a structurally different raw shape (single
-            # flat POD grid, no "POL: NON-ISC" split) - see LAECLuxParser.
-            return 0.0
-        score = 0.5
-        if "LAEC" in title.upper():
-            score += 0.3
-        if any(str(ws.cell(row=r, column=1).value or "").strip().upper() == "POL: NON-ISC" for r in range(1, 10)):
-            score += 0.2
-        return min(score, 1.0)
-
     def _resolve_codes(self, raw_code: str) -> list[str]:
         raw_code = raw_code.strip()
         if raw_code in self.group_codes:
@@ -713,23 +696,6 @@ class LAECLuxParser(LAECParser):
     its __init__ (same laec.yaml container map / group codes)."""
 
     lane_id: ClassVar[str] = "LAEC-LUX"
-
-    @classmethod
-    def detect(cls, wb: Workbook) -> float:
-        if RAW_SHEET_DRY not in wb.sheetnames:
-            return 0.0
-        ws = wb[RAW_SHEET_DRY]
-        title = str(ws.cell(row=1, column=1).value or "")
-        score = 0.5 if "LAEC" in title.upper() else 0.0
-        if "LUX" in title.upper():
-            score += 0.3
-        nor_tokens = {
-            str(ws.cell(row=LUX_SECTION.container_label_row, column=c).value or "").strip().upper()
-            for c in range(LUX_SECTION.min_col, LUX_SECTION.max_col + 1)
-        }
-        if "NOR" in nor_tokens:
-            score += 0.2
-        return min(score, 1.0)
 
     def parse_raw(self, wb: Workbook) -> RawExtraction:
         ws = wb[RAW_SHEET_DRY]

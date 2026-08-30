@@ -166,20 +166,6 @@ class WAFParser(BaseMRGParser):
         self.container_map = container_map or load_container_map("waf")
         self.location_resolver = location_resolver or LocationResolver()
 
-    @classmethod
-    def detect(cls, wb: Workbook) -> float:
-        ws = _find_sheet(wb)
-        if ws is None:
-            return 0.0
-        score = 0.5
-        header_tokens = {ws.cell(row=CONTAINER_LABEL_ROW, column=c).value for c in range(MIN_COL, MAX_COL + 1)}
-        if {"D2", "D4", "D5"} <= {str(t).strip() for t in header_tokens if t}:
-            score += 0.3
-        title = str(ws.cell(row=1, column=1).value or "")
-        if "WAF" in title.upper():
-            score += 0.2
-        return min(score, 1.0)
-
     def parse_raw(self, wb: Workbook) -> RawExtraction:
         ws = _find_sheet(wb)
         if ws is None:

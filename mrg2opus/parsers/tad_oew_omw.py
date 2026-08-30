@@ -196,18 +196,6 @@ class TADOewOmwParser(BaseMRGParser):
     lane_id: ClassVar[str] = "TAD-OEW-OMW"
     SHEET_NAME_OVERRIDES: ClassVar[dict[str, str]] = {"route_notes": "ROUTE NOTE"}
 
-    @classmethod
-    def detect(cls, wb: Workbook) -> float:
-        names = set(wb.sheetnames)
-        if not ({SHEET_OEW, SHEET_OMW} & names):
-            return 0.0
-        score = 0.5 * len({SHEET_OEW, SHEET_OMW} & names)
-        ws = wb[SHEET_OEW] if SHEET_OEW in names else wb[SHEET_OMW]
-        header_tokens = {str(ws.cell(row=1, column=c).value or "").strip() for c in range(1, 23)}
-        if "Include Surcharge" in header_tokens and "DEL Description" in header_tokens:
-            score = min(score + 0.3, 1.0)
-        return score
-
     def parse_raw(self, wb: Workbook) -> RawExtraction:
         scopes: dict[str, ScopeData] = {}
         for scope_name in (SHEET_OEW, SHEET_OMW):

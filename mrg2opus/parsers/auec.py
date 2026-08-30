@@ -247,21 +247,6 @@ class AUECParser(BaseMRGParser):
     def __init__(self, location_resolver: LocationResolver | None = None):
         self.location_resolver = location_resolver or LocationResolver()
 
-    @classmethod
-    def detect(cls, wb: Workbook) -> float:
-        names = set(wb.sheetnames)
-        score = 0.0
-        for expected in (SHEET_MAIN, SHEET_AUSYD, SHEET_NZJ):
-            if expected in names:
-                score += 1 / 3
-        if score == 0.0:
-            return 0.0
-        ws = wb[SHEET_MAIN] if SHEET_MAIN in names else wb[wb.sheetnames[0]]
-        header_tokens = {str(ws.cell(row=5, column=c).value or "").strip() for c in range(4, 11)}
-        if "20'RAD" in header_tokens or any("RAD" in t for t in header_tokens):
-            score = min(score + 0.2, 1.0)
-        return score
-
     def parse_raw(self, wb: Workbook) -> RawExtraction:
         validity_start, validity_end = (None, None)
         main_sheets: list[SheetData] = []

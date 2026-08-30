@@ -52,11 +52,6 @@ class BaseMRGParser(ABC):
     # still fall back to the normal tagged naming.
     SCOPED_SHEET_NAME_OVERRIDES: ClassVar[dict[str, dict[str, str]]] = {}
 
-    @classmethod
-    @abstractmethod
-    def detect(cls, wb: Workbook) -> float:
-        """Return a confidence score in [0, 1] that this parser matches wb."""
-
     @abstractmethod
     def parse_raw(self, wb: Workbook) -> RawExtraction:
         """Excel -> intermediate tables, with exclusion (strikethrough/fill)

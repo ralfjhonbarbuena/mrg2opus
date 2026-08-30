@@ -72,21 +72,6 @@ class EAFParser(BaseMRGParser):
         self.container_map = container_map or load_container_map("eaf")
         self.location_resolver = location_resolver or LocationResolver()
 
-    @classmethod
-    def detect(cls, wb: Workbook) -> float:
-        sublane_sheets = [n for n in wb.sheetnames if SUBLANE_SHEET_RE.match(n)]
-        if not sublane_sheets:
-            return 0.0
-        score = 0.5
-        ws = wb[sublane_sheets[0]]
-        title = str(ws.cell(row=1, column=1).value or "")
-        if "EAF" in title.upper():
-            score += 0.3
-        header_tokens = {ws.cell(row=CONTAINER_LABEL_ROW, column=c).value for c in range(MIN_COL, MAX_COL + 1)}
-        if {"D2", "D4", "D5"} <= {str(t).strip() for t in header_tokens if t}:
-            score += 0.2
-        return min(score, 1.0)
-
     def _sublane_sheets(self, wb: Workbook) -> dict[str, Worksheet]:
         return {m.group(1): wb[m.group(0)] for name in wb.sheetnames if (m := SUBLANE_SHEET_RE.match(name))}
 

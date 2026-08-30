@@ -243,17 +243,6 @@ class NZJParser(BaseMRGParser):
     def __init__(self, location_resolver: LocationResolver | None = None):
         self.location_resolver = location_resolver or LocationResolver()
 
-    @classmethod
-    def detect(cls, wb: Workbook) -> float:
-        if SHEET_NAME not in wb.sheetnames:
-            return 0.0
-        ws = wb[SHEET_NAME]
-        header_tokens = {str(ws.cell(row=POD_LABEL_ROW + 1, column=c).value or "").strip() for c in range(4, 14)}
-        score = 0.5
-        if "R2 - RAD" in header_tokens or "R5 - RAD" in header_tokens:
-            score = min(score + 0.5, 1.0)
-        return score
-
     def parse_raw(self, wb: Workbook) -> RawExtraction:
         if SHEET_NAME not in wb.sheetnames:
             return RawExtraction(tables={})

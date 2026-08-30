@@ -241,19 +241,6 @@ class Nz1SeaParser(BaseMRGParser):
     def __init__(self, location_resolver: LocationResolver | None = None):
         self.location_resolver = location_resolver or LocationResolver()
 
-    @classmethod
-    def detect(cls, wb: Workbook) -> float:
-        ws = _find_sheet(wb)
-        if ws is None:
-            return 0.0
-        score = 0.5
-        header_tokens = {str(ws.cell(row=HEADER_ROW, column=c).value or "").strip().upper() for c in range(1, 11)}
-        if {"D2", "D4", "D5", "R2", "R5"} <= header_tokens:
-            score += 0.3
-        if any("RAD" in t for t in header_tokens):
-            score += 0.2
-        return min(score, 1.0)
-
     def parse_raw(self, wb: Workbook) -> RawExtraction:
         ws = _find_sheet(wb)
         if ws is None:

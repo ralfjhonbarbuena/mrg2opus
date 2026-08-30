@@ -330,19 +330,6 @@ class LAWCParser(BaseMRGParser):
         self.container_map = container_map or load_container_map("lawc")
         self.location_store = location_store or LocationBankStore()
 
-    @classmethod
-    def detect(cls, wb: Workbook) -> float:
-        if RAW_SHEET_MAIN not in wb.sheetnames:
-            return 0.0
-        score = 0.5
-        ws = wb[RAW_SHEET_MAIN]
-        title = str(ws.cell(row=1, column=1).value or "") + str(ws.cell(row=1, column=4).value or "")
-        if "LAWC" in title.upper():
-            score += 0.3
-        if RAW_SHEET_OOG in wb.sheetnames and RAW_SHEET_ISC in wb.sheetnames:
-            score += 0.2
-        return min(score, 1.0)
-
     def _resolve_codes(self, raw_text: str) -> list[str]:
         # Grouped-code cells use "/" (e.g. "CNFOC/ CNFUG") most of the
         # time, but at least one raw row uses "," instead ("VNSGN, VNCMP,

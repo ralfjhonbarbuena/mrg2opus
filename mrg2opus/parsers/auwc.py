@@ -212,22 +212,6 @@ class AUWCParser(BaseMRGParser):
     def __init__(self, location_resolver: LocationResolver | None = None):
         self.location_resolver = location_resolver or LocationResolver()
 
-    @classmethod
-    def detect(cls, wb: Workbook) -> float:
-        names = set(wb.sheetnames)
-        score = 0.0
-        for expected in (SHEET_AUFRE, SHEET_AUADL):
-            if any(expected in n for n in names):
-                score += 0.5
-        if score == 0.0:
-            return 0.0
-        first_sheet = wb.sheetnames[0]
-        ws = wb[first_sheet]
-        header_tokens = {str(ws.cell(row=4, column=c).value or "").strip() for c in range(4, 12)}
-        if any("NOR" in t for t in header_tokens):
-            score = min(score + 0.2, 1.0)
-        return score
-
     def parse_raw(self, wb: Workbook) -> RawExtraction:
         validity_start, validity_end = None, None
         origins: list[OriginRow] = []

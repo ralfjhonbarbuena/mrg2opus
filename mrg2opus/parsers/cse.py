@@ -278,19 +278,6 @@ class CSEParser(BaseMRGParser):
         self.location_store = location_store or LocationBankStore()
         self.group_codes = load_group_codes("cse")
 
-    @classmethod
-    def detect(cls, wb: Workbook) -> float:
-        if RAW_SHEET_MAIN not in wb.sheetnames:
-            return 0.0
-        score = 0.5
-        ws = wb[RAW_SHEET_MAIN]
-        title = str(ws.cell(row=1, column=1).value or "")
-        if "CARIBBEAN" in title.upper() or "CSE" in title.upper():
-            score += 0.2
-        if str(ws.cell(row=6, column=3).value or "").strip().upper() == "SERVICE SCOPE = CSE":
-            score += 0.3
-        return min(score, 1.0)
-
     def _resolve_codes(self, raw_code: str) -> list[str]:
         raw_code = raw_code.strip()
         if raw_code in self.group_codes:
