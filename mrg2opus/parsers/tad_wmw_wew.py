@@ -105,7 +105,7 @@ def _parse_date(text: str | None) -> date | None:
 
 def _parse_included_codes(text: str | None) -> list[str]:
     """Same authoritative literal comma-separated list as TAD-OEW-OMW - see
-    that module's comment for why this bypasses INDIVIDUAL_CHARGE_CODES."""
+    that module's comment for why this bypasses is_known_charge_code()."""
     if not text:
         return []
     return [c.strip().upper() for c in str(text).split(",") if c.strip()]

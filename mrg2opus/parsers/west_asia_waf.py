@@ -55,7 +55,7 @@ from mrg2opus.parsers.common.ordering import group_by_destination
 from mrg2opus.parsers.common.sequencing import assign_cmdt_seq_numbers
 from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.presets.models import MappingProfile
-from mrg2opus.schema.charge_codes import CHARGE_CODE_NAMES, INDIVIDUAL_CHARGE_CODES
+from mrg2opus.schema.charge_codes import CHARGE_CODE_NAMES, is_known_charge_code
 from mrg2opus.schema.opus_rows import CmdtNoteRow, OpusRowSet, RatesRow
 
 TITLE_KEYWORD = "WEST ASIA WAF"
@@ -107,14 +107,14 @@ def _parse_included_charge_codes(ws: Worksheet) -> list[str]:
     OBS, MBS ; ' - comma separated, alphabetized in the ground-truth note
     text (confirmed both weeks) - same convention as WAF's own
     _parse_included_charge_codes. ERS isn't a real OPUS charge code
-    (absent from INDIVIDUAL_CHARGE_CODES and CHARGE_CODE_NAMES both) and
+    (absent from CHARGE_CODE_NAMES, so is_known_charge_code drops it) and
     is correctly dropped by ground truth too."""
     text = str(ws.cell(row=INCLUDES_ROW, column=INCLUDES_COL).value or "")
     m = _INCLUDES_RE.search(text)
     if not m:
         return []
     codes = [c.strip().upper() for c in m.group(1).split(",") if c.strip()]
-    codes = [c for c in codes if c in INDIVIDUAL_CHARGE_CODES]
+    codes = [c for c in codes if is_known_charge_code(c)]
     return sorted(dict.fromkeys(codes))
 
 

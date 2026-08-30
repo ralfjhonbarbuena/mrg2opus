@@ -48,11 +48,14 @@ etc.) have no rate values at all ("No standard FAK offer for Persian Gulf
 Origins"), and MZ's own DG-add-on/HAZ surcharge table is a different,
 non-FAK rate structure out of scope for the base RATES grid.
 
-Still unverified and awaiting user confirmation (see the review notes):
-whether BRS/WRC really should be filtered out of the charge-code list by
-INDIVIDUAL_CHARGE_CODES, whether DG duplicate rows are correct here at all
-given each sheet's own "HAZ/PSA table under auto-rating", and the invented
-G0005-G0010 commodity codes.
+BRS and WRC ARE filed here (user-confirmed 2026-08-30): the tool now
+recognizes every real charge code the raw text lists and leaves
+suppression to MappingProfile.excluded_charge_codes - see
+charge_codes.py::is_known_charge_code.
+
+Still unverified and awaiting user confirmation: whether DG duplicate rows
+are correct here at all given each sheet's own "HAZ/PSA table under
+auto-rating", and the invented G0005-G0010 commodity codes.
 """
 from __future__ import annotations
 
@@ -75,7 +78,7 @@ from mrg2opus.parsers.common.ordering import group_by_destination
 from mrg2opus.parsers.common.sequencing import assign_cmdt_seq_numbers
 from mrg2opus.parsers.west_asia_waf import WestAsiaWAFParser
 from mrg2opus.presets.models import MappingProfile
-from mrg2opus.schema.charge_codes import CHARGE_CODE_NAMES, INDIVIDUAL_CHARGE_CODES
+from mrg2opus.schema.charge_codes import CHARGE_CODE_NAMES, is_known_charge_code
 from mrg2opus.schema.opus_rows import CmdtNoteRow, OpusRowSet, RatesRow, RouteNoteRow
 
 SHEET_SAF = "West Asia - South Africa"
@@ -129,7 +132,7 @@ def _parse_included_charge_codes(ws: Worksheet, row_idx: int) -> list[str]:
     if not m:
         return []
     codes = [c.strip().upper() for c in re.split(r"[,/]", m.group(1)) if c.strip()]
-    return sorted(dict.fromkeys(c for c in codes if c in INDIVIDUAL_CHARGE_CODES))
+    return sorted(dict.fromkeys(c for c in codes if is_known_charge_code(c)))
 
 
 # Port shorthand used in the raw Remarks/Service Lane text ("Via NSA",

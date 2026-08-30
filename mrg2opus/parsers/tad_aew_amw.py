@@ -251,7 +251,7 @@ def _parse_date(text: str | None) -> date | None:
 def _parse_included_codes(text: str | None) -> list[str]:
     """Same authoritative literal comma-separated list as every other TAD
     lane - see tad_oew_omw.py's comment for why this bypasses
-    INDIVIDUAL_CHARGE_CODES. Notably: EX.JP's own rows naturally carry a
+    is_known_charge_code(). Notably: EX.JP's own rows naturally carry a
     SHORTER list than the main sheet's rows (e.g. missing HEA/LSF) simply
     because each row's own column already says so - no special-casing
     needed for the Japan scope here or in a future phase."""

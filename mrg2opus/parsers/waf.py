@@ -38,7 +38,7 @@ from mrg2opus.parsers.common.ordering import group_by_destination
 from mrg2opus.parsers.common.sequencing import assign_cmdt_seq_numbers
 from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.presets.models import MappingProfile
-from mrg2opus.schema.charge_codes import INDIVIDUAL_CHARGE_CODES
+from mrg2opus.schema.charge_codes import is_known_charge_code
 from mrg2opus.schema.opus_rows import OpusRowSet, RatesRow
 
 SHEET_NAME_RE = re.compile(r"^Asia WAF MRG", re.IGNORECASE)
@@ -129,7 +129,7 @@ def _parse_included_charge_codes(ws: Worksheet) -> list[str]:
     if not m:
         return []
     codes = [c.strip().upper() for c in m.group(1).split(",") if c.strip()]
-    codes = [c for c in codes if c in INDIVIDUAL_CHARGE_CODES]
+    codes = [c for c in codes if is_known_charge_code(c)]
     return sorted(dict.fromkeys(codes))
 
 

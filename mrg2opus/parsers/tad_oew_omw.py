@@ -123,12 +123,10 @@ def _parse_included_codes(text: str | None) -> list[str]:
     authoritative comma-separated charge-code list (e.g.
     'CAF,CSS,EFS,HEA,MBS') - no free-text parsing or lane-wide hardcoding
     needed, unlike every other lane built so far. Deliberately NOT
-    filtered through INDIVIDUAL_CHARGE_CODES - that frozenset exists to
-    disambiguate OTHER lanes' free-text "Includes X/Y/Z" parsing (see
-    common/cmdt_notes.py::parse_included_charge_codes) and does not
-    include CAF, even though CAF is confirmed (ground truth: OEW POLLY.xlsx
-    / OMW.xlsx CMDT NOTE, both list CAF as a child row) to always be a
-    legitimate, individually-filed code here."""
+    gated through is_known_charge_code() - that check exists to sanity-
+    check OTHER lanes' free-text "Includes X/Y/Z" parsing (see
+    common/cmdt_notes.py::parse_included_charge_codes); TAD's column is
+    already an authoritative structured list, so it is trusted verbatim."""
     if not text:
         return []
     return [c.strip().upper() for c in str(text).split(",") if c.strip()]

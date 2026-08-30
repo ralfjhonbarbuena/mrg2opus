@@ -2,12 +2,13 @@
 (e.g. "EFS" -> "EMERGENCY FUEL SURCHARGE") when generating OPUS CMDT NOTE
 boilerplate text.
 
+Membership in CHARGE_CODE_NAMES is also what makes a token parsed out of a
+raw "Includes X/Y/Z" line count as a real charge code at all - see
+is_known_charge_code() at the bottom of this module.
+
 CHARGE_CODE_NAMES has two tiers:
   - The hand-confirmed entries below, each verified against a real OPUS
-    ground-truth CMDT NOTE sheet for a specific lane - these are the ones
-    INDIVIDUAL_CHARGE_CODES actually gates (see that frozenset's own
-    docstring for why it stays a narrow, ground-truth-confirmed
-    whitelist, NOT everything below).
+    ground-truth CMDT NOTE sheet for a specific lane.
   - _TAD_TOOL_CHARGE_CODE_NAMES, a 562-code supplemental table mined
     2026-08-27 from "Tool for TAD.xlsm"'s own Sheet1 (the in-house VBA
     filing-export tool's own charge-code -> full-name lookup, used by its
@@ -48,9 +49,9 @@ CHARGE_CODE_NAMES: dict[str, str] = {
 _CONFIRMED_KEYS = frozenset(CHARGE_CODE_NAMES)
 
 # Supplemental, NOT ground-truth-confirmed per-code - see module docstring.
-# A code appearing here does NOT mean it belongs in INDIVIDUAL_CHARGE_CODES;
-# that whitelist only grows when a specific lane's real CMDT NOTE sheet
-# confirms the code gets its own child row.
+# A code appearing here IS what makes it recognizable as a charge code
+# (see is_known_charge_code below) - but its NAME here is only a sensible
+# default until some lane's real CMDT NOTE sheet confirms the wording.
 _TAD_TOOL_CHARGE_CODE_NAMES: dict[str, str] = {
     "AD2": "PREMIUM CARGO SERVICE FOR DRY 20",
     "AD4": "PREMIUM CARGO SERVICE FOR DRY 40",
@@ -618,23 +619,29 @@ _TAD_TOOL_CHARGE_CODE_NAMES: dict[str, str] = {
 # Hand-confirmed entries always win over the supplemental table.
 CHARGE_CODE_NAMES = {**_TAD_TOOL_CHARGE_CODE_NAMES, **CHARGE_CODE_NAMES}
 
-# Codes confirmed (against ground truth) to become their own CMDT NOTE child
-# row when mentioned in a raw sheet's "Rate structure: Includes X/Y/Z" line.
-# Deliberately a whitelist, not "everything after Includes": EAF's raw text
-# lists BRS as included too, but it never gets a child row in the ground
-# truth - only extend this set when a new code is directly confirmed
-# against a real OPUS CMDT NOTE sheet, not by guessing from raw text alone.
-# NOT expanded to match the much larger CHARGE_CODE_NAMES table above -
-# that table's coverage is about having a NAME ready if a code is ever
-# confirmed, not a signal that the code should auto-qualify here.
-#
-# CORRECTION (2026-08-26): BAF was originally excluded here too, based on
-# the older bundled EAF.xlsx sample's ground truth. User-clarified reason:
-# their SOP tells human filing agents NOT to file BAF - a special case for
-# people, not a filing-format rule. This tool should reproduce whatever
-# the raw MRG's "Includes" text says, BAF included, rather than mimicking
-# that human-only SOP exclusion. Confirmed via reference/2_OPUS/7_EAF-KEMBA
-# and 8_EAF-KEMBA, both of which do include it.
-INDIVIDUAL_CHARGE_CODES: frozenset[str] = frozenset(
-    {"BAF", "EFS", "MBS", "OBS", "HEA", "LSF", "PSS", "THL", "CSS", "SLF", "CGD", "EPH", "ISL", "AMS"}
-)
+def is_known_charge_code(code: str) -> bool:
+    """Should this token from a raw "Rate structure: Includes X/Y/Z" line
+    become its own CMDT NOTE child row?
+
+    Policy (user-directed 2026-08-30): **recognize every real charge
+    code**. Anything with a name in CHARGE_CODE_NAMES qualifies; the user
+    suppresses whatever their account shouldn't file via
+    MappingProfile.excluded_charge_codes ("special instructions") rather
+    than the tool deciding for them.
+
+    This replaced a 14-code hand-maintained whitelist
+    (INDIVIDUAL_CHARGE_CODES). That whitelist was built by only admitting
+    codes seen in some ground-truth CMDT NOTE sheet, which meant real
+    surcharges a raw MRG genuinely listed - BRS and WRC among them - were
+    silently dropped. The same reasoning already retired BAF from that
+    exclusion on 2026-08-26: ground truth omitted it because the team's
+    SOP tells human filing agents to skip it, a people rule rather than a
+    filing-format rule, and this tool reproduces the raw MRG as-is (see
+    the project_tool_mirrors_mrg_not_human_sop memory).
+
+    Still a gate, not a free-for-all: these codes come from splitting free
+    text, so a token with no known name (e.g. WAF's "ERS", which real
+    ground truth also drops) is still discarded rather than filed as a
+    bogus charge code.
+    """
+    return code.strip().upper() in CHARGE_CODE_NAMES

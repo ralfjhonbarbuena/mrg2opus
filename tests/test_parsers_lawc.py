@@ -207,7 +207,7 @@ def test_lawc_cmdt_note_default_splits_by_sheet():
 # doesn't reproduce it (25 generated vs 35 expected children; the real
 # sheet's boilerplate includes BAF, which lawc.py's own hardcoded
 # MAIN_CHARGE_CODES list doesn't - the same category of gap already fixed
-# for EAF/SAF's shared INDIVIDUAL_CHARGE_CODES allowlist, but LAWC has its
+# for EAF/SAF's shared free-text charge-code parsing, but LAWC has its
 # own separate hardcoded per-group charge-code lists, not fixed here) -
 # a real, separate follow-up, not reverse-engineered under time pressure.
 

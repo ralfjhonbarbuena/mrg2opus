@@ -130,9 +130,9 @@ def test_tad_route_note_matches_ground_truth(scope):
 def test_tad_caf_gets_its_own_cmdt_note_child_row():
     """Regression guard: TAD's 'Include Surcharge' column is an authoritative
     structured list, not free text - it must NOT be filtered through
-    INDIVIDUAL_CHARGE_CODES (a whitelist built for other lanes' ambiguous
-    'Includes X/Y/Z' text parsing, which doesn't include CAF even though
-    CAF is confirmed - ground truth - to always get its own child row here)."""
+    is_known_charge_code() (a sanity check for other lanes' ambiguous
+    'Includes X/Y/Z' text parsing); CAF is confirmed - ground truth - to
+    always get its own child row here."""
     row_set = _run_tad()["OEW"]
     codes = {n.code for n in row_set.cmdt_notes}
     assert "CAF" in codes

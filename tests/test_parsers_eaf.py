@@ -50,10 +50,19 @@ pytestmark = pytest.mark.skipif(
 RATES_IGNORE_FIELDS = {"type", "commodity_group_code", "commodity_group_description", "commodity_note", "cmdt_seq", "route_seq"}
 
 
+# This team's filings omit BRS even though every raw MRG's own "Includes"
+# line lists it - the same human-SOP-not-filing-format situation already
+# established for BAF (see project_tool_mirrors_mrg_not_human_sop memory,
+# and charge_codes.py::is_known_charge_code). The tool now recognizes
+# every real charge code and leaves the decision to the user, so
+# reproducing this filing means saying so explicitly here.
+SOP_EXCLUDED_CHARGE_CODES = ["BRS"]
+
+
 def _run_eaf(raw_path: Path):
     wb = openpyxl.load_workbook(raw_path, data_only=True)
     parser = EAFParser()
-    return parser.run_multi(wb, MappingProfile())
+    return parser.run_multi(wb, MappingProfile(excluded_charge_codes=SOP_EXCLUDED_CHARGE_CODES))
 
 
 def test_eaf_tzdar_standalone_file_detected_as_tzdar_only():

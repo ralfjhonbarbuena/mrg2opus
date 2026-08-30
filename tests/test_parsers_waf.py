@@ -46,10 +46,19 @@ pytestmark = pytest.mark.skipif(
 RATES_IGNORE_FIELDS = {"type", "commodity_group_code", "commodity_group_description", "cmdt_seq", "commodity_note"}
 
 
+# This team's filings omit BRS even though the raw MRG's own "Incl." line
+# lists it - the same human-SOP-not-filing-format situation already
+# established for BAF (see project_tool_mirrors_mrg_not_human_sop memory,
+# and charge_codes.py::is_known_charge_code). The tool now recognizes
+# every real charge code and leaves the decision to the user, so
+# reproducing this filing means saying so explicitly here.
+SOP_EXCLUDED_CHARGE_CODES = ["BRS"]
+
+
 def _run_waf(raw_path: Path):
     wb = openpyxl.load_workbook(raw_path, data_only=True)
     parser = WAFParser()
-    return parser.run(wb, MappingProfile())
+    return parser.run(wb, MappingProfile(excluded_charge_codes=SOP_EXCLUDED_CHARGE_CODES))
 
 
 @pytest.mark.parametrize("raw_path,opus_path", PAIRS)
@@ -101,6 +110,31 @@ def test_waf_cmdt_note_matches_ground_truth(raw_path, opus_path):
                 continue
             gv, ev = _normalize(g.get(field_name)), _normalize(e.get(field_name))
             assert gv == ev, f"row {i} {field_name}: {gv!r} != {ev!r}"
+
+
+def test_waf_recognizes_every_charge_code_in_the_raw_text_by_default():
+    """The tool recognizes every real charge code the raw MRG lists and
+    leaves suppression to the user (charge_codes.py::is_known_charge_code).
+    WAF's raw "Incl." line names BRS, so an un-configured run MUST file it -
+    it was silently dropped before, when a 14-code whitelist gated this."""
+    raw_path, _ = PAIRS[0]
+    wb = openpyxl.load_workbook(raw_path, data_only=True)
+    row_set = WAFParser().run(wb, MappingProfile())
+
+    assert "BRS" in {n.code for n in row_set.cmdt_notes}
+    assert "BUNKER COST RECOVERY SURCHARGE(BRS)" in row_set.cmdt_notes[0].contents
+
+
+def test_waf_unknown_token_is_still_not_filed_as_a_charge_code():
+    """Recognizing every real code is not the same as accepting anything:
+    these come from splitting free text, so a token with no known name is
+    still discarded. (WAF's own sibling lane has "ERS", which real ground
+    truth also drops.)"""
+    from mrg2opus.schema.charge_codes import is_known_charge_code
+
+    assert is_known_charge_code("BRS") and is_known_charge_code("WRC")
+    assert not is_known_charge_code("ERS")
+    assert not is_known_charge_code("Docs")
 
 
 def test_waf_excluded_charge_codes_drops_baf_end_to_end():

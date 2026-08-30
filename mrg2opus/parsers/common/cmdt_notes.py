@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from mrg2opus.schema.charge_codes import CHARGE_CODE_NAMES, INDIVIDUAL_CHARGE_CODES
+from mrg2opus.schema.charge_codes import CHARGE_CODE_NAMES, is_known_charge_code
 from mrg2opus.schema.opus_rows import CmdtNoteRow
 
 _INCLUDES_RE = re.compile(r"\b(?:incl\.|includes?)\s+([A-Z/]+)", re.IGNORECASE)
@@ -16,14 +16,15 @@ _INCLUDES_RE = re.compile(r"\b(?:incl\.|includes?)\s+([A-Z/]+)", re.IGNORECASE)
 
 def parse_included_charge_codes(text: str) -> list[str]:
     """Extract charge codes from a raw 'Rate structure: Includes X/Y/Z, subj
-    to ...' line, keeping only codes confirmed (via INDIVIDUAL_CHARGE_CODES)
-    to actually get their own CMDT NOTE child row - some mentioned codes
-    (e.g. EAF's BAF/BRS) never do, per ground truth."""
+    to ...' line. Every real charge code is recognized (gated only on
+    having a known name - see charge_codes.py::is_known_charge_code);
+    suppressing one this account shouldn't file is the user's call, via
+    MappingProfile.excluded_charge_codes."""
     m = _INCLUDES_RE.search(text)
     if not m:
         return []
     codes = [c.strip().upper() for c in m.group(1).split("/") if c.strip()]
-    return sorted(c for c in codes if c in INDIVIDUAL_CHARGE_CODES)
+    return sorted(c for c in codes if is_known_charge_code(c))
 
 
 def build_cmdt_notes(
