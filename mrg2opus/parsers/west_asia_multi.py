@@ -1,0 +1,538 @@
+"""West Asia to WAF/SAF/EAF/MZ combined lane - EXPLORATORY, UNVERIFIED.
+
+reference/1_MRGs/13-14_West Asia to WAF_SAF_EAF_MZ is one workbook with 4
+sheets: "West Asia - West Africa", "West Asia - South Africa", "West Asia -
+East Africa", "West Asia - Mozambique". No reference/2_OPUS ground truth
+exists for this raw file at all, so unlike every other lane in this
+codebase, none of this module's business rules are ground-truth-confirmed
+- it's a first-draft, structurally-consistent-with-the-rest-of-the-codebase
+best effort, built for the user to review before it's trusted or tested
+like the other lanes.
+
+The WEST AFRICA sheet is byte-for-byte the same layout as the already-built
+WEST-ASIA-WAF lane (same title text "West Asia WAF FAK rate guideline",
+same 8-POD x D2/D4/D5 grid) - confirmed by running WestAsiaWAFParser
+directly against this workbook (detect() scores 1.0, produces 204 sensible
+rate rows) - so that sheet is handled by reusing WestAsiaWAFParser as-is,
+not reimplemented here.
+
+SOUTH AFRICA, EAST AFRICA, and MOZAMBIQUE are a genuinely different,
+simpler shape this codebase hasn't seen before: one destination-name
+header (merged, no code in parens - "Durban", "Mombasa" / "Dar Es Salaam"
+side by side, "Maputo") over a D2/D4/D5 column block, with origins listed
+one per row. SAF/EAF give the origin's Port Code directly in their own
+column (no fuzzy matching needed for the origin); MZ gives only an origin
+NAME with no code column at all, needing Location Bank fuzzy resolution
+for the origin too. All three need the destination fuzzy-resolved (no POD
+code given anywhere on the sheet, unlike the WAF sheet's own "POD: Tema
+(GHTEM)" convention).
+
+Routing metadata (SAF's "Remarks" column, EAF's "Service Lane" column, and
+the sheet-wide "Service lane: X" header on SAF/MZ) is parsed into the
+STRUCTURED fields every other lane already uses, not folded into the
+origin description: "via X" -> o_via_code, "Rail" -> origin_transmode, the
+lane code -> a ROUTE NOTE. Across both reference weeks the vocabulary is
+closed - only 6 distinct values exist (see Routing). This also resolves
+SAF's two Kolkata rows, which are the same origin/destination/cargo at
+genuinely different rates (5000 "Via CMB" vs 6700 "Via NSA(RAIL)") and
+would otherwise collide on their OPUS key: o_via_code is what separates
+them, exactly as compare.py::rates_row_key's own comment describes.
+
+SAF also carries the same origin-scoped "incl. THL for cargo ex LKCMB/
+PKKHI/BDCGP." override the WEST-ASIA-WAF lane already handles - filed as
+3 extra POL-scoped THL child rows on each CMDT NOTE block, with THL named
+in the "inclusive of" sentence but given no blank-origin child of its own.
+
+Intentionally skipped: the "Middle East" origin rows (Jebel Ali, Dammam,
+etc.) have no rate values at all ("No standard FAK offer for Persian Gulf
+Origins"), and MZ's own DG-add-on/HAZ surcharge table is a different,
+non-FAK rate structure out of scope for the base RATES grid.
+
+Still unverified and awaiting user confirmation (see the review notes):
+whether BRS/WRC really should be filtered out of the charge-code list by
+INDIVIDUAL_CHARGE_CODES, whether DG duplicate rows are correct here at all
+given each sheet's own "HAZ/PSA table under auto-rating", and the invented
+G0005-G0010 commodity codes.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from datetime import date
+from typing import ClassVar
+
+from openpyxl.workbook import Workbook
+from openpyxl.worksheet.worksheet import Worksheet
+
+from mrg2opus.location_bank.fuzzy_match import LocationResolver
+from mrg2opus.location_bank.store import LocationBankStore
+from mrg2opus.parsers.base import BaseMRGParser, RawExtraction
+from mrg2opus.parsers.common.commodity import resolve_commodity_code, resolve_commodity_description
+from mrg2opus.parsers.common.container_map import ContainerMap, load_container_map
+from mrg2opus.parsers.common.exclusion import is_excluded
+from mrg2opus.parsers.common.header_grid import flatten_pod_header
+from mrg2opus.parsers.common.ordering import group_by_destination
+from mrg2opus.parsers.common.sequencing import assign_cmdt_seq_numbers
+from mrg2opus.parsers.west_asia_waf import WestAsiaWAFParser
+from mrg2opus.presets.models import MappingProfile
+from mrg2opus.schema.charge_codes import CHARGE_CODE_NAMES, INDIVIDUAL_CHARGE_CODES
+from mrg2opus.schema.opus_rows import CmdtNoteRow, OpusRowSet, RatesRow, RouteNoteRow
+
+SHEET_SAF = "West Asia - South Africa"
+SHEET_EAF = "West Asia - East Africa"
+SHEET_MZ = "West Asia - Mozambique"
+
+# (dr_description, dr_code, dg_description, dg_code) per sub-lane - codes
+# picked to not collide with the WAF sheet's own G0002/G0004 (see
+# west_asia_waf.py) since all 4 sub-lanes share one output workbook.
+_DEFAULTS: dict[str, tuple[str, str, str, str]] = {
+    "SAF": ("West Asia South Africa MRG", "G0005", "West Asia South Africa MRG - DG", "G0006"),
+    "EAF": ("West Asia East Africa MRG", "G0007", "West Asia East Africa MRG - DG", "G0008"),
+    "MZ": ("West Asia Mozambique MRG", "G0009", "West Asia Mozambique MRG - DG", "G0010"),
+}
+
+_VALIDITY_RE = re.compile(r"(\d{1,2})\w{0,2}\s+(\w+)\s*-\s*\s*(\d{1,2})\w{0,2}\s+(\w+)\s+(\d{4})")
+_HEADER_SERVICE_LANE_RE = re.compile(r"Service lane:\s*([A-Z0-9]+)", re.IGNORECASE)
+# Identical text/handling to the WEST-ASIA-WAF lane's own override - see
+# west_asia_waf.py::_parse_thl_override_origins.
+_THL_ORIGINS_RE = re.compile(r"incl\.\s*THL\s+for\s+cargo\s+ex\s+([A-Z/]+)", re.IGNORECASE)
+_INCLUDES_RE = re.compile(r"incl\.?\s*([A-Za-z0-9,/\s]+?)\s*(?:,?\s*subj\b|;|$)", re.IGNORECASE)
+_MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+
+
+def _month_number(name: str) -> int:
+    return _MONTHS.index(name.strip().lower()[:3]) + 1
+
+
+def _row_text(ws: Worksheet, row_idx: int, max_col: int = 20) -> str:
+    return " ".join(str(ws.cell(row=row_idx, column=c).value or "") for c in range(1, max_col + 1))
+
+
+def _parse_validity(ws: Worksheet, row_idx: int) -> tuple[date | None, date | None]:
+    m = _VALIDITY_RE.search(_row_text(ws, row_idx))
+    if not m:
+        return None, None
+    d1, mon1, d2, mon2, year = m.groups()
+    try:
+        end = date(int(year), _month_number(mon2), int(d2))
+        return date(int(year), _month_number(mon1), int(d1)), end
+    except ValueError:
+        return None, None
+
+
+def _parse_included_charge_codes(ws: Worksheet, row_idx: int) -> list[str]:
+    """Unlike the WAF sheet's own comma-only 'incl. X, Y, Z ;' text, these
+    3 sheets mix '/' and ',' as separators in the same string (e.g. SAF:
+    'incl. BAF/HEA/BRS/OBS/WRC/LSF/CGD,MBS,EFS      subj to...') - split on
+    either."""
+    m = _INCLUDES_RE.search(_row_text(ws, row_idx))
+    if not m:
+        return []
+    codes = [c.strip().upper() for c in re.split(r"[,/]", m.group(1)) if c.strip()]
+    return sorted(dict.fromkeys(c for c in codes if c in INDIVIDUAL_CHARGE_CODES))
+
+
+# Port shorthand used in the raw Remarks/Service Lane text ("Via NSA",
+# "Via CMB"). Deliberately an explicit table, NOT fuzzy matching: AUBP
+# already showed fuzzy-matching short origin tokens fails badly (~16/64
+# wrong - see project_mrg2opus_aubp_lane memory). Extend only when a new
+# abbreviation actually appears in a real file.
+_VIA_PORT_CODES: dict[str, str] = {"NSA": "INNSA", "CMB": "LKCMB"}
+
+# A leading bare service-lane token, e.g. "MIM" in "MIM ( Rail (Via NSA) )".
+_SERVICE_LANE_RE = re.compile(r"^([A-Z][A-Z0-9]{1,5})\b")
+_VIA_RE = re.compile(r"\bvia\s+([A-Z]{3,5})\b", re.IGNORECASE)
+_RAIL_RE = re.compile(r"\brail\b", re.IGNORECASE)
+
+
+@dataclass
+class Routing:
+    """Everything a raw Remarks / Service Lane cell encodes. Confirmed
+    closed vocabulary across BOTH reference weeks - only 6 distinct values
+    exist: "MIM", "MIM (Via NSA)", "MIM ( Rail (Via NSA) )", "Via CMB",
+    "Via NSA(RAIL)", "Pre-carriage: ICE"."""
+
+    service_lane: str | None = None
+    via_code: str | None = None
+    by_rail: bool = False
+    # Whatever is left after the recognized parts are stripped (e.g.
+    # "Pre-carriage: ICE", whose "ICE" has no confirmed port/mode mapping).
+    # Passed through verbatim as a route note rather than dropped or
+    # guessed at - see _route_notes_for().
+    leftover: str | None = None
+
+
+def _parse_routing(text: str | None, *, expect_service_lane: bool) -> Routing:
+    """expect_service_lane: EAF's column is a Service Lane column whose
+    value starts with the lane code; SAF's is a free-text Remarks column
+    with no lane in it, so a leading "Via"/"Pre-carriage" token there must
+    NOT be mistaken for one."""
+    if not text:
+        return Routing()
+    rest = text.strip()
+
+    service_lane = None
+    if expect_service_lane:
+        m = _SERVICE_LANE_RE.match(rest)
+        if m:
+            service_lane = m.group(1)
+            rest = rest[m.end():]
+
+    via_code = None
+    m = _VIA_RE.search(rest)
+    if m:
+        via_code = _VIA_PORT_CODES.get(m.group(1).upper())
+        if via_code:
+            rest = rest[: m.start()] + rest[m.end():]
+
+    by_rail = bool(_RAIL_RE.search(rest))
+    if by_rail:
+        rest = _RAIL_RE.sub("", rest)
+
+    leftover = re.sub(r"[\s()/,]+", " ", rest).strip() or None
+    return Routing(service_lane=service_lane, via_code=via_code, by_rail=by_rail, leftover=leftover)
+
+
+@dataclass
+class FlatRateCell:
+    origin_code: str | None
+    origin_text: str
+    routing: Routing
+    pod_label: str
+    container_label: str
+    value: float
+
+
+@dataclass
+class FlatRawData:
+    validity_start: date | None
+    validity_end: date | None
+    included_charge_codes: list[str]
+    # Sheet-wide "Service lane: X" header text (SAF's "AIM", MZ's "MIM").
+    # EAF has no such header - it carries a per-row Service Lane column
+    # instead, which lands on each row's own Routing.
+    service_lane: str | None = None
+    # SAF only: "incl. THL for cargo ex LKCMB/PKKHI/BDCGP." - the same
+    # origin-scoped charge override the WEST-ASIA-WAF lane already handles,
+    # filed as extra POL-scoped THL child rows (see _build_cmdt_notes).
+    thl_override_origins: list[str] = field(default_factory=list)
+    rate_cells: list[FlatRateCell] = field(default_factory=list)
+
+
+def _read_flat_grid(
+    ws: Worksheet,
+    *,
+    validity_row: int,
+    includes_row: int,
+    pod_label_row: int,
+    container_label_row: int,
+    data_min_row: int,
+    data_max_row: int,
+    origin_name_col: int,
+    origin_code_col: int | None,
+    remark_col: int | None,
+    remark_is_service_lane: bool,
+    min_col: int,
+    max_col: int,
+) -> FlatRawData:
+    validity_start, validity_end = _parse_validity(ws, validity_row)
+    included_codes = _parse_included_charge_codes(ws, includes_row)
+    header_cols = flatten_pod_header(ws, pod_label_row, container_label_row, min_col, max_col)
+
+    # Both sheet-wide settings live in the free text above the grid, at a
+    # row that varies per sheet - scan the whole header block rather than
+    # pinning a row number.
+    header_text = " ".join(_row_text(ws, r) for r in range(1, data_min_row))
+    lane_match = _HEADER_SERVICE_LANE_RE.search(header_text)
+    thl_match = _THL_ORIGINS_RE.search(header_text)
+
+    rate_cells: list[FlatRateCell] = []
+    for row_idx in range(data_min_row, data_max_row + 1):
+        name_cell = ws.cell(row=row_idx, column=origin_name_col)
+        if name_cell.value in (None, "") or is_excluded(name_cell):
+            continue
+        origin_text = str(name_cell.value).strip()
+
+        origin_code = None
+        if origin_code_col is not None:
+            code_val = ws.cell(row=row_idx, column=origin_code_col).value
+            origin_code = str(code_val).strip() or None if code_val not in (None, "") else None
+
+        remark = None
+        if remark_col is not None:
+            remark_val = ws.cell(row=row_idx, column=remark_col).value
+            remark = str(remark_val).strip() or None if remark_val not in (None, "") else None
+        routing = _parse_routing(remark, expect_service_lane=remark_is_service_lane)
+
+        for hc in header_cols:
+            cell = ws.cell(row=row_idx, column=hc.col_idx)
+            if cell.value in (None, "") or not isinstance(cell.value, (int, float)):
+                continue
+            if is_excluded(cell):
+                continue
+            rate_cells.append(FlatRateCell(origin_code, origin_text, routing, hc.pod_label, hc.container_label, cell.value))
+
+    return FlatRawData(
+        validity_start,
+        validity_end,
+        included_codes,
+        service_lane=lane_match.group(1) if lane_match else None,
+        thl_override_origins=[c.strip() for c in thl_match.group(1).split("/") if c.strip()] if thl_match else [],
+        rate_cells=rate_cells,
+    )
+
+
+def _route_note_for(service_lane: str | None, leftover: str | None) -> str | None:
+    """Service-lane wording is the one already verified in TAD-WMW-WEW and
+    LAWC. `leftover` (only "Pre-carriage: ICE" in any real file so far) is
+    passed through VERBATIM rather than reworded - "ICE" has no confirmed
+    port or transmode mapping, so inventing one would be a guess; keeping
+    the raw text at least surfaces it to the filer instead of dropping it.
+    Both join with " | " when a row has both, same as TAD-WMW-WEW."""
+    parts = []
+    if service_lane:
+        parts.append(f"Rates are applicable for Vessel Service Lane: {service_lane}")
+    if leftover:
+        parts.append(leftover)
+    return " | ".join(parts) if parts else None
+
+
+def _build_cmdt_notes(data: FlatRawData, config: MappingProfile) -> list[CmdtNoteRow]:
+    excluded = frozenset(config.excluded_charge_codes)
+    codes = [c for c in data.included_charge_codes if c not in excluded]
+    if not codes or data.validity_start is None or data.validity_end is None:
+        return []
+    names = {**CHARGE_CODE_NAMES, "HEA": "HEAVY SURCHARGE"}
+    # THL is named in the "inclusive of" sentence but gets no blank-origin
+    # child row of its own - only the origin-scoped ones below. Same shape
+    # as the WEST-ASIA-WAF lane's own verified handling.
+    thl_origins = list(data.thl_override_origins) if "THL" not in excluded else []
+    text_codes = sorted([*codes, "THL"]) if thl_origins else codes
+    names_line = " and the ".join(f"{names.get(c, c)}({c})" for c in text_codes)
+    contents = "\n".join(
+        [
+            f"Rates are valid from {data.validity_start:%Y%m%d} to {data.validity_end:%Y%m%d}",
+            f"Rates are inclusive of the {names_line}",
+            "Rates are subject to all other surcharges, including those, if any, "
+            "specified in the contract and those published in the Governing Tariff(s) at the time of shipment.",
+        ]
+    )
+    parent = CmdtNoteRow(
+        contents=contents, charge_seq=1, code="APP",
+        application_effective=data.validity_start, application_expires=data.validity_end, application="S",
+    )
+    child_effective = config.rfa_effective_date if config.rfa_effective_date is not None else data.validity_start
+    child_expiry = config.rfa_expiry_date if config.rfa_expiry_date is not None else data.validity_end
+    children = [
+        CmdtNoteRow(charge_seq=i + 2, code=c, application_effective=child_effective, application_expires=child_expiry, application="I")
+        for i, c in enumerate(codes)
+    ]
+    children.extend(
+        CmdtNoteRow(
+            charge_seq=len(codes) + 2 + i, code="THL", pol=origin,
+            application_effective=child_effective, application_expires=child_expiry, application="I",
+        )
+        for i, origin in enumerate(thl_origins)
+    )
+    return [parent, *children]
+
+
+class WestAsiaMultiParser(BaseMRGParser):
+    lane_id: ClassVar[str] = "WEST-ASIA-MULTI"
+
+    def __init__(
+        self,
+        container_map: ContainerMap | None = None,
+        location_store: LocationBankStore | None = None,
+        location_resolver: LocationResolver | None = None,
+    ):
+        # Same D2/D4/D5 -> 20/40/40hc grid as the WAF sheet's own map - no
+        # reefer column on any of these 3 sheets.
+        self.container_map = container_map or load_container_map("west_asia_waf")
+        self.location_store = location_store or LocationBankStore()
+        self.location_resolver = location_resolver or LocationResolver()
+
+    @classmethod
+    def detect(cls, wb: Workbook) -> float:
+        return 1.0 if {SHEET_SAF, SHEET_EAF, SHEET_MZ} & set(wb.sheetnames) else 0.0
+
+    def parse_raw(self, wb: Workbook) -> RawExtraction:
+        tables: dict[str, FlatRawData] = {}
+        if SHEET_SAF in wb.sheetnames:
+            ws = wb[SHEET_SAF]
+            tables["SAF"] = _read_flat_grid(
+                ws, validity_row=1, includes_row=3, pod_label_row=9, container_label_row=10,
+                data_min_row=11, data_max_row=35, origin_name_col=2, origin_code_col=3,
+                remark_col=7, remark_is_service_lane=False, min_col=4, max_col=6,
+            )
+        if SHEET_EAF in wb.sheetnames:
+            ws = wb[SHEET_EAF]
+            tables["EAF"] = _read_flat_grid(
+                ws, validity_row=1, includes_row=3, pod_label_row=9, container_label_row=10,
+                data_min_row=11, data_max_row=24, origin_name_col=2, origin_code_col=3,
+                remark_col=10, remark_is_service_lane=True, min_col=4, max_col=9,
+            )
+        if SHEET_MZ in wb.sheetnames:
+            ws = wb[SHEET_MZ]
+            tables["MZ"] = _read_flat_grid(
+                ws, validity_row=1, includes_row=3, pod_label_row=7, container_label_row=8,
+                data_min_row=9, data_max_row=12, origin_name_col=2, origin_code_col=None,
+                remark_col=None, remark_is_service_lane=False, min_col=4, max_col=6,
+            )
+        return RawExtraction(tables={"flat": tables})
+
+    def _resolve_origin(self, code: str | None, text: str) -> tuple[str, str] | None:
+        if code:
+            rec = self.location_store.get_by_code(code)
+            return (code, rec.primary_name) if rec else None
+        matches = self.location_resolver.match_text(text)
+        if not matches or any(m.needs_review for m in matches):
+            return None
+        return ";".join(sorted({m.code for m in matches})), ";".join(sorted({m.primary_name for m in matches}))
+
+    def _resolve_destination(self, pod_label: str) -> tuple[str, str] | None:
+        matches = self.location_resolver.match_text(pod_label)
+        if not matches or any(m.needs_review for m in matches):
+            return None
+        return ";".join(sorted({m.code for m in matches})), ";".join(sorted({m.primary_name for m in matches}))
+
+    def _build_one(self, suffix: str, data: FlatRawData, config: MappingProfile) -> OpusRowSet:
+        dr_description_key, dr_code_default, dg_description_key, dg_code_default = _DEFAULTS[suffix]
+        dr_description = resolve_commodity_description(dr_description_key, config)
+        dr_code = resolve_commodity_code(dr_description_key, dr_code_default, config)
+        dg_description = resolve_commodity_description(dg_description_key, config)
+        dg_code = resolve_commodity_code(dg_description_key, dg_code_default, config)
+        block_seq = assign_cmdt_seq_numbers([dr_description_key, dg_description_key], config.commodity_sequence_overrides)
+        dr_cmdt_seq = block_seq[dr_description_key]
+        dg_cmdt_seq = block_seq[dg_description_key]
+
+        groups: dict[tuple, dict[str, float]] = {}
+        names_by_key: dict[tuple, tuple[str, str]] = {}
+        for rc in data.rate_cells:
+            origin_result = self._resolve_origin(rc.origin_code, rc.origin_text)
+            if origin_result is None:
+                continue
+            dest_result = self._resolve_destination(rc.pod_label)
+            if dest_result is None:
+                continue
+            origin_code, origin_name = origin_result
+            dest_code, dest_name = dest_result
+            suffix_size = self.container_map.suffix_for(rc.container_label)
+            if suffix_size is None:
+                continue
+            # The routing (not the raw remark text) is part of the key -
+            # SAF files Kolkata TWICE, once "Via CMB" at 5000 and once
+            # "Via NSA(RAIL)" at 6700. Same origin/destination/cargo, so
+            # o_via_code is the only thing that separates them; keying on
+            # it here is what keeps them two distinct rows instead of one
+            # silently overwriting the other.
+            r = rc.routing
+            key = (origin_code, dest_code, r.via_code, r.by_rail, r.service_lane, r.leftover)
+            groups.setdefault(key, {})[suffix_size] = rc.value
+            names_by_key[key] = (origin_name, dest_name)
+
+        dr_rows: list[RatesRow] = []
+        for key, sizes in groups.items():
+            origin_code, dest_code, via_code, by_rail, row_service_lane, leftover = key
+            origin_name, dest_name = names_by_key[key]
+            dr_rows.append(
+                RatesRow(
+                    cmdt_seq=dr_cmdt_seq,
+                    commodity_group_code=dr_code,
+                    commodity_group_description=dr_description,
+                    origin_code=origin_code,
+                    origin_description=origin_name,
+                    origin_term="CY",
+                    origin_transmode="Rail" if by_rail else None,
+                    o_via_code=via_code,
+                    destination_code=dest_code,
+                    destination_description=dest_name,
+                    destination_term="CY",
+                    prefix=self.container_map.prefix,
+                    cgo_type=self.container_map.cgo_type,
+                    cur_20="USD" if "20" in sizes else None,
+                    rate_20=sizes.get("20"),
+                    cur_40="USD" if "40" in sizes else None,
+                    rate_40=sizes.get("40"),
+                    cur_40hc="USD" if "40hc" in sizes else None,
+                    rate_40hc=sizes.get("40hc"),
+                    route_note=_route_note_for(row_service_lane or data.service_lane, leftover),
+                )
+            )
+
+        dg_rows: list[RatesRow] = []
+        if not config.skip_dg_generation.get(dr_description_key, False):
+            dg_rows = [
+                row.model_copy(update={"cgo_type": "DG", "commodity_group_code": dg_code, "commodity_group_description": dg_description, "cmdt_seq": dg_cmdt_seq})
+                for row in dr_rows
+            ]
+
+        dr_rows = group_by_destination(dr_rows)
+        dg_rows = group_by_destination(dg_rows)
+        for i, row in enumerate(dr_rows, start=1):
+            row.route_seq = i
+        for i, row in enumerate(dg_rows, start=1):
+            row.route_seq = i
+        rates = [*dr_rows, *dg_rows]
+
+        cmdt_notes: list[CmdtNoteRow] = []
+        note_text_by_description: dict[str, str | None] = {}
+        for description, description_key in ((dr_description, dr_description_key), (dg_description, dg_description_key)):
+            if not any(r.commodity_group_description == description for r in rates):
+                continue
+            notes = _build_cmdt_notes(data, config)
+            for note in notes:
+                note.header_seq = block_seq[description_key]
+            cmdt_notes.extend(notes)
+            note_text_by_description[description] = notes[0].contents if notes else None
+        for row in rates:
+            row.commodity_note = note_text_by_description.get(row.commodity_group_description)
+
+        # One ROUTE NOTE per rates row carrying one, linked back by
+        # (header_seq, route_seq) - same shape as every other lane's.
+        route_notes = [
+            RouteNoteRow(
+                header_seq=row.cmdt_seq,
+                route_seq=row.route_seq,
+                note_seq=1,
+                contents=row.route_note,
+                charge_seq=1,
+                code="APP",
+                application_effective=data.validity_start,
+                application_expires=data.validity_end,
+                application="S",
+            )
+            for row in rates
+            if row.route_note
+        ]
+
+        return OpusRowSet(rates=rates, cmdt_notes=cmdt_notes, route_notes=route_notes)
+
+    def to_opus_rows(self, raw: RawExtraction, config: MappingProfile) -> OpusRowSet:
+        tables: dict[str, FlatRawData] = raw.tables["flat"]
+        if not tables:
+            return OpusRowSet()
+        suffix, data = next(iter(tables.items()))
+        return self._build_one(suffix, data, config)
+
+    def run_multi(self, wb: Workbook, config: MappingProfile | None = None) -> dict[str, OpusRowSet]:
+        config = config or MappingProfile()
+        result: dict[str, OpusRowSet] = {}
+
+        waf_row_set = WestAsiaWAFParser().run(wb, config)
+        if waf_row_set.rates:
+            result["WAF"] = waf_row_set
+
+        raw = self.parse_raw(wb)
+        tables: dict[str, FlatRawData] = raw.tables["flat"]
+        for suffix, data in tables.items():
+            result[suffix] = self._build_one(suffix, data, config)
+
+        return result
+
+
+# Deliberately NOT registered via registry.register()/LayoutProfile yet:
+# with no ground truth to verify against, this is a draft for manual
+# review, not a lane the UI/CLI's auto-detection should route real files
+# into. Run it directly (WestAsiaMultiParser().run_multi(wb)) until the
+# user confirms the output and it graduates to a tested, registered lane.
