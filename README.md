@@ -35,13 +35,21 @@ Linux throughout this file. The clone is ~35 MB, nearly all of it the
 ### Regenerating the Location Bank
 
 Not part of setup - the database is committed and shipping it is the
-supported path. `mrg2opus.location_bank.bootstrap_from_samples` still
-exists but **cannot be run as written**: it mines a
-`Sample MRGs with OPUS FORMATS/` folder that has since been deleted in
-favour of `reference/1_MRGs` + `reference/2_OPUS` (see the
-feedback-reference-folder-convention note). It would need repointing at
-those before it works again. Ports are otherwise added one at a time as
-real filings turn up (`LocationBankStore.upsert_location`).
+supported path. But when new reference filings land in `reference/2_OPUS`,
+this re-mines every port they name:
+
+```bash
+./.venv/Scripts/python.exe -m mrg2opus.location_bank.bootstrap_from_samples
+```
+
+It only adds or refreshes `sample_mined` rows, so a hand-curated
+`manual_override` entry is never overwritten. It skips names carrying the
+comma-to-double-space export artifact some filings have, and identifies
+RATES sheets by their header rather than their name (a vertical-rates
+sheet is named "V RATES" in one filing and is shifted a column, which
+otherwise mined descriptions as if they were port codes). Multi-port rows
+are held back and resolved by elimination rather than paired up by
+position, since the codes and names are each sorted independently.
 
 There is no equivalent bank/registry for commodity group codes - each
 parser ships a hardcoded default code+description per commodity group
