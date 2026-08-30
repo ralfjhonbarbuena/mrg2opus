@@ -19,7 +19,6 @@ from mrg2opus.schema.opus_rows import (
     RouteNoteRow,
     SpecialNoteRow,
     VerticalRatesRow,
-    group_vertical_rates_by_cmdt_seq,
 )
 
 
@@ -121,16 +120,12 @@ def _write_row_set(wb: Workbook, row_set: OpusRowSet, names: dict[str, str]) -> 
     if row_set.route_notes:
         _write_route_note_sheet(wb, names["route_notes"], row_set.route_notes)
     if row_set.vertical_rates:
-        # One sheet per CMDT Seq rather than a single combined sheet: the
-        # combined form overruns what OPUS accepts in one upload for a
-        # large lane, and splitting on the commodity group is the boundary
-        # a filer can actually act on. Numbered by the group's own CMDT
-        # Seq so a sheet maps back to the RATES rows it came from.
-        groups = group_vertical_rates_by_cmdt_seq(row_set.vertical_rates)
-        base = names["vertical_rates"]
-        for position, (cmdt_seq, rows) in enumerate(groups, start=1):
-            number = cmdt_seq if cmdt_seq is not None else position
-            _write_vertical_rates_sheet(wb, f"{base} {number}", rows)
+        # One sheet, however many rows - matching real ground truth, where
+        # every commodity group shares a single sheet and the CMDT Seq
+        # block marks each boundary. A sheet past the OPUS row limit is
+        # still written; see pipeline.vertical_rates_over_cap, which
+        # reports it so the filer can trim it in Excel.
+        _write_vertical_rates_sheet(wb, names["vertical_rates"], row_set.vertical_rates)
     if row_set.freetime:
         _write_freetime_sheet(wb, names["freetime"], row_set.freetime)
 

@@ -113,20 +113,16 @@ def render(state: WizardState) -> None:
             "failed Location Bank resolution. Go back and double-check the lane."
         )
 
-    # VERTICAL RATES is written one sheet per CMDT Seq, which keeps every
-    # lane seen so far under the limit. Warn only about a single commodity
-    # group that is still too big - the one case splitting can't fix.
+    # Advisory only - the sheet is still generated in full. Real filings
+    # keep every commodity group on one VERTICAL RATES sheet, so this
+    # doesn't split it; trimming is the filer's call.
     over_cap = vertical_rates_over_cap(row_sets)
     if over_cap:
-        detail = ", ".join(
-            f"{suffix or '(default)'} VERTICAL RATES {cmdt_seq} ({count:,} rows)"
-            for (suffix, cmdt_seq), count in over_cap.items()
-        )
+        detail = ", ".join(f"{suffix or '(default)'} ({count:,} rows)" for suffix, count in over_cap.items())
         st.warning(
-            f"Over the {VERTICAL_RATES_ROW_CAP:,}-row OPUS upload limit: {detail}. Vertical rates are "
-            "already split one sheet per CMDT Seq, so this commodity group is too big to upload that way - "
-            "upload its RATES sheet instead, or split the group. You can also turn VERTICAL RATES off in "
-            "Customize."
+            f"VERTICAL RATES is larger than the {VERTICAL_RATES_ROW_CAP:,} rows OPUS may accept in one "
+            f"upload: {detail}. The sheet is still generated in full - trim or split it in Excel before "
+            "uploading, upload the RATES sheet instead, or turn VERTICAL RATES off in Customize."
         )
 
     st.markdown("#### Data preview")

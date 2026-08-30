@@ -62,36 +62,14 @@ def test_writer_omits_route_note_sheet_when_empty():
     assert "RN" not in wb.sheetnames
 
 
-def _vr(cmdt_seq, n):
-    """n vertical rows for one commodity group, in the shape
-    explode_to_vertical_rates() produces: the header fields (cmdt_seq
-    among them) only on the first row, blank on the rest."""
-    return [VerticalRatesRow(cmdt_seq=cmdt_seq if i == 0 else None, per="D2", rate=100) for i in range(n)]
-
-
-def test_vertical_rates_written_one_numbered_sheet_per_cmdt_seq():
-    """Split by commodity group so a large lane stays under the OPUS
-    upload limit, numbered by the group's own CMDT Seq."""
-    row_set = OpusRowSet(vertical_rates=[*_vr(1, 3), *_vr(2, 2)])
+def test_vertical_rates_written_as_one_sheet():
+    """Real filings keep every commodity group on a single VERTICAL RATES
+    sheet (confirmed: reference/2_OPUS/27's WEW sheet is 5,209 rows across
+    4 groups), so this is never split - however many rows it runs to."""
+    rows = [VerticalRatesRow(per="D2", rate=100) for _ in range(5)]
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "o.xlsx"
-        write_opus_workbook_multi({"": row_set}, out)
+        write_opus_workbook_multi({"": OpusRowSet(vertical_rates=rows)}, out)
         wb = openpyxl.load_workbook(out)
-        assert [s for s in wb.sheetnames if "VERTICAL" in s] == ["VERTICAL RATES 1", "VERTICAL RATES 2"]
-        assert wb["VERTICAL RATES 1"].max_row == 5  # 2 header rows + 3
-        assert wb["VERTICAL RATES 2"].max_row == 4  # 2 header rows + 2
-
-
-def test_vertical_rates_non_contiguous_group_stays_one_sheet():
-    """Regression: LAWC files its NOR rows under the SEA group, so one
-    commodity group's rows arrive in two separate runs. Grouping on
-    adjacency produced two sheets with the same name, and openpyxl
-    silently renamed the second - splitting the group across two
-    misleadingly-named sheets."""
-    row_set = OpusRowSet(vertical_rates=[*_vr(1, 2), *_vr(2, 2), *_vr(1, 3)])
-    with tempfile.TemporaryDirectory() as tmp:
-        out = Path(tmp) / "o.xlsx"
-        write_opus_workbook_multi({"": row_set}, out)
-        wb = openpyxl.load_workbook(out)
-        assert [s for s in wb.sheetnames if "VERTICAL" in s] == ["VERTICAL RATES 1", "VERTICAL RATES 2"]
-        assert wb["VERTICAL RATES 1"].max_row == 7  # 2 header rows + 2 + 3, merged
+        assert [s for s in wb.sheetnames if "VERTICAL" in s] == ["VERTICAL RATES"]
+        assert wb["VERTICAL RATES"].max_row == 7  # 2 header rows + 5

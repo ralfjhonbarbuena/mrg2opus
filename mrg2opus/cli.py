@@ -51,11 +51,11 @@ def parse_command(args: argparse.Namespace) -> None:
             f"{len(row_set.special_notes)} SPECIAL NOTE, "
             f"{len(row_set.route_notes)} ROUTE NOTE, {len(row_set.vertical_rates)} VERTICAL RATES rows"
         )
-    for (suffix, cmdt_seq), count in vertical_rates_over_cap(row_sets).items():
+    for suffix, count in vertical_rates_over_cap(row_sets).items():
         print(
-            f"WARNING: [{suffix or '(default)'}] VERTICAL RATES {cmdt_seq} has {count:,} rows, over the "
-            f"{VERTICAL_RATES_ROW_CAP:,}-row OPUS upload limit. It is already one sheet per CMDT Seq, so "
-            "this commodity group is too big to upload as vertical rates - split it or use RATES instead."
+            f"WARNING: [{suffix or '(default)'}] VERTICAL RATES has {count:,} rows, over the "
+            f"{VERTICAL_RATES_ROW_CAP:,} OPUS may accept in one upload - it may not go through as-is. "
+            "The sheet is written in full; trim or split it in Excel, or upload RATES instead."
         )
     print(f"Wrote {args.out}")
 

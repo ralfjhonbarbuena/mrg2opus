@@ -109,11 +109,15 @@ class VerticalRatesRow(BaseModel):
     alone (no prefix letter) as its own column, matching the real sheet's
     "PER" and "Cargo Type" columns exactly. No commodity_note/route_note
     columns exist on this sheet - confirmed, not an oversight.
-    Header-group fields (CMDT Seq/Commodity Group/Actual Customer/Route
-    Seq/Origin/O.Via/D.Via/Destination) are only populated on the FIRST
-    exploded row for a given source RatesRow, blank on the rest - the
-    same "shared header, blank-filled children" convention already used
-    by CmdtNoteRow, baked into the data itself rather than the writer.
+    Blank-fills at TWO levels, not one - the same "shared header,
+    blank-filled children" idea as CmdtNoteRow, baked into the data rather
+    than the writer, but applied at two different scopes:
+      - Route Seq / Origin / O.Via / D.Via / Destination appear on the
+        first exploded row of each source RatesRow, blank on that row's
+        other container sizes.
+      - CMDT Seq / Commodity Group / Actual Customer appear only where a
+        new commodity group STARTS, blank for every other row in it -
+        OPUS reads a blank commodity block as "same group as above".
     """
 
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -143,24 +147,39 @@ class VerticalRatesRow(BaseModel):
 # uses (20', 40', 40'HC, 45').
 _VERTICAL_SIZE_SLOTS = [("rate_20", "2"), ("rate_40", "4"), ("rate_40hc", "5"), ("rate_45", "7")]
 
-_VERTICAL_SHARED_FIELDS = [
+# The sheet blank-fills at TWO different levels, confirmed against real
+# ground truth (reference/2_OPUS/27's own WEW VERTICAL RATES: 5,209 data
+# rows, CMDT Seq written on just 4 of them - once per commodity group -
+# while Route Seq and the origin/destination block repeat for every rate
+# row). OPUS reads a blank commodity block as "same group as above", so
+# restating it per row would be wrong, not merely redundant.
+_VERTICAL_GROUP_FIELDS = [
     "cmdt_seq", "commodity_group_code", "commodity_group_description",
-    "actual_customer_code", "actual_customer_description", "route_seq",
+    "actual_customer_code", "actual_customer_description",
+]
+_VERTICAL_ROW_FIELDS = [
+    "route_seq",
     "origin_code", "origin_description", "origin_term", "origin_transmode",
     "o_via_code", "d_via_code",
     "destination_code", "destination_description", "destination_term", "destination_transmode",
 ]
 
 
-def explode_to_vertical_rates(row: RatesRow) -> list[VerticalRatesRow]:
-    """One RatesRow -> 0-4 VerticalRatesRow, one per populated rate slot."""
+def explode_to_vertical_rates(row: RatesRow, *, start_of_group: bool = True) -> list[VerticalRatesRow]:
+    """One RatesRow -> 0-4 VerticalRatesRow, one per populated rate slot.
+
+    start_of_group: whether this row opens a new CMDT Seq block. Only then
+    does the commodity block get written - see _VERTICAL_GROUP_FIELDS.
+    """
     present = [(getattr(row, field), digit) for field, digit in _VERTICAL_SIZE_SLOTS if getattr(row, field) is not None]
-    shared = {name: getattr(row, name) for name in _VERTICAL_SHARED_FIELDS}
+    header = {name: getattr(row, name) for name in _VERTICAL_ROW_FIELDS}
+    if start_of_group:
+        header.update({name: getattr(row, name) for name in _VERTICAL_GROUP_FIELDS})
     out: list[VerticalRatesRow] = []
     for i, (rate, digit) in enumerate(present):
         out.append(
             VerticalRatesRow(
-                **(shared if i == 0 else {}),
+                **(header if i == 0 else {}),
                 per=f"{row.prefix}{digit}",
                 cargo_type=row.cgo_type,
                 rate=rate,
@@ -169,54 +188,37 @@ def explode_to_vertical_rates(row: RatesRow) -> list[VerticalRatesRow]:
     return out
 
 
-def group_vertical_rates_by_cmdt_seq(
-    rows: list[VerticalRatesRow],
-) -> list[tuple[Optional[int], list[VerticalRatesRow]]]:
-    """Split exploded vertical rates into one group per CMDT Seq, keeping
-    the order they were built in.
-
-    OPUS caps how many rows one upload may carry, and exploding RATES into
-    a row per container size roughly triples the count - so a big lane
-    overruns it as a single sheet but fits comfortably once split by
-    commodity group (see excel_io/writer.py, which writes one numbered
-    sheet per group).
-
-    Grouping reads cmdt_seq off the rows themselves rather than taking it
-    as an argument, which works because explode_to_vertical_rates() writes
-    the header fields onto the FIRST row of each source RatesRow and
-    blanks them on that row's continuation rows - so the last non-None
-    value carries forward. A lane whose rows carry no cmdt_seq at all
-    degrades to a single group.
-
-    Buckets by cmdt_seq rather than by adjacency, because a commodity
-    group's rows are NOT always contiguous: LAWC files its NOR rows under
-    the SEA group, so group 2 appears as two separate runs. Grouping on
-    adjacency emitted two sheets both named for group 2, and openpyxl
-    silently renamed the second - splitting one commodity group across two
-    misleadingly-named sheets. One group is always one sheet.
-    """
-    buckets: dict[Optional[int], list[VerticalRatesRow]] = {}
-    order: list[Optional[int]] = []
-    current: Optional[int] = None
-    for row in rows:
-        if row.cmdt_seq is not None:
-            current = row.cmdt_seq
-        if current not in buckets:
-            buckets[current] = []
-            order.append(current)
-        buckets[current].append(row)
-    return [(seq, buckets[seq]) for seq in order]
-
-
 def build_vertical_rates(row_set: "OpusRowSet") -> "OpusRowSet":
     """User-toggled (MappingProfile.include_vertical_rates), applied
-    uniformly across every lane by ui/parsing.py::run_parser() - not
+    uniformly across every lane by pipeline.py::run_parser() - not
     something individual parsers populate themselves. Derives entirely
     from row_set.rates (not rates_port_port - no evidence any lane needs
-    a port-port equivalent of this sheet)."""
-    vertical: list[VerticalRatesRow] = []
+    a port-port equivalent of this sheet).
+
+    Produces ONE flat list, written as one sheet: the commodity block is
+    stamped only where cmdt_seq changes, which is what marks a group
+    boundary for OPUS.
+
+    Rows are bucketed so each commodity group appears exactly once, as a
+    single contiguous block. RATES itself does NOT guarantee that - a
+    lane's rows follow raw sheet order and any appended DG duplicates, so
+    a group can appear, stop, and resume (TAD WMW/WEW's WEW scope runs
+    1,2,3,2,1,2,3,2). That ordering is accepted on RATES, where the tests
+    match rows by business identity rather than position, but here the
+    blank-fill makes order load-bearing: every real VERTICAL RATES sheet
+    seen states each group exactly once (reference/2_OPUS/27's WEW sheet
+    restates CMDT Seq 4 times for 4 groups), so a resumed group would be a
+    shape OPUS has never been given. Bucketing keeps groups in the order
+    they first appear and preserves each row's order within its group.
+    """
+    buckets: dict[object, list[RatesRow]] = {}
     for row in row_set.rates:
-        vertical.extend(explode_to_vertical_rates(row))
+        buckets.setdefault(row.cmdt_seq, []).append(row)
+
+    vertical: list[VerticalRatesRow] = []
+    for group_rows in buckets.values():
+        for i, row in enumerate(group_rows):
+            vertical.extend(explode_to_vertical_rates(row, start_of_group=i == 0))
     return row_set.model_copy(update={"vertical_rates": vertical})
 
 

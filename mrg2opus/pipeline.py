@@ -12,15 +12,14 @@ from __future__ import annotations
 from mrg2opus.parsers.base import BaseMRGParser
 from mrg2opus.parsers.common.ordering import reorder_row_set
 from mrg2opus.presets.models import MappingProfile
-from mrg2opus.schema.opus_rows import OpusRowSet, build_vertical_rates, group_vertical_rates_by_cmdt_seq
+from mrg2opus.schema.opus_rows import OpusRowSet, build_vertical_rates
 
-# OPUS rejects an upload past this many rows on one sheet (user-stated).
-# VERTICAL RATES is written one sheet per CMDT Seq (see excel_io/writer.py),
-# so the number that matters is the biggest SINGLE group, not the lane
-# total - splitting already keeps every other lane under the limit. A
-# single group over the cap is the one case splitting can't fix, so it is
-# reported rather than silently truncated: how to break up a commodity
-# group is a filing decision, not something to guess at.
+# OPUS may not accept a VERTICAL RATES upload past this many rows
+# (user-stated). Deliberately advisory: the sheet is still generated in
+# full and the count reported, so the filer can trim or split it in Excel.
+# Nothing here truncates or splits - real ground truth keeps every
+# commodity group on ONE sheet, so splitting would produce a shape OPUS
+# doesn't expect just to satisfy a limit the filer can handle themselves.
 VERTICAL_RATES_ROW_CAP = 10_000
 
 
@@ -33,13 +32,12 @@ def run_parser(parser: BaseMRGParser, workbook, profile: MappingProfile) -> dict
     return row_sets
 
 
-def vertical_rates_over_cap(row_sets: dict[str, OpusRowSet]) -> dict[tuple[str, int | None], int]:
-    """{(scope, cmdt_seq): row count} for every VERTICAL RATES sheet still
-    over the cap after the per-CMDT-Seq split - empty when they all fit,
-    which is the normal case."""
-    over: dict[tuple[str, int | None], int] = {}
-    for suffix, rs in row_sets.items():
-        for cmdt_seq, rows in group_vertical_rates_by_cmdt_seq(rs.vertical_rates):
-            if len(rows) > VERTICAL_RATES_ROW_CAP:
-                over[(suffix, cmdt_seq)] = len(rows)
-    return over
+def vertical_rates_over_cap(row_sets: dict[str, OpusRowSet]) -> dict[str, int]:
+    """{scope: row count} for every VERTICAL RATES sheet over the cap -
+    empty when they all fit. Advisory only; the sheet is written either
+    way."""
+    return {
+        suffix: len(rs.vertical_rates)
+        for suffix, rs in row_sets.items()
+        if len(rs.vertical_rates) > VERTICAL_RATES_ROW_CAP
+    }
