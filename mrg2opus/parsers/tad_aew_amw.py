@@ -30,9 +30,36 @@ differences confirmed against reference/2_OPUS/23_TAD FILING AEW AMW:
   generated D/DG duplicate, see config.generate_tad_dg_duplicate, copies
   the same D7 rate across rather than recomputing it).
 
-Origin ARBS (from the raw "Origin ARBS" sheet) and the Japan-origin
-scope ("EX.JP AEW"/"EX.JP AMW"/"Origin ARBS - EX JAPAN", surfaced as a
-third "JAPAN" output) are a later phase, not yet implemented here.
+- **Origin ARBS** (from the raw "Origin ARBS" sheet, feeding the same
+  ArbsRow/OPUS ARBS schema already used by CSE's Yangtze mechanism):
+  - Both raw snapshot files carry byte-identical Origin ARBS content (no
+    rate correction here) - only the FIRST occurrence is parsed, not
+    merged like the dated RATES sheets.
+  - `Per(*)` = a cargo-type-derived prefix (Dry General/Dry Dangerous->D,
+    Reefer/Reefer Dry->R) + the rate column's own size digit (2/4/5/7 for
+    the 20/40/HC/45 columns) - `CGO Type` is a flat "DR" constant
+    regardless of cargo type (confirmed, not derived from CARGO_TYPE_MAP's
+    own cgo_type element).
+  - `Seq.` is left blank - CSE's own ARBS ground truth leaves it blank
+    too; this filing's own raw sheet happens to reuse that column for a
+    plain Service Scope label, not a real per-row sequence number.
+  - **Over vs Via**: the raw sheet can carry TWO SEPARATE rows for the
+    same Point + Cargo Type, each its own explicit (Over, Via) pair (e.g.
+    CNBHY/Dry General has one row Over=CNYTN/Via=CNNSA and another
+    Over=CNYTN/Via=CNYTN; THLKR/Dry General has one row Over=SGSIN/
+    Via=SGSIN and another Over=THLCH/Via=<blank>) - these are genuinely
+    different data rows, not one row needing synthesized alternates: Via
+    is read straight off its own column, blank included. Row order
+    overall is OUTER by rate-size column (20, then 40, then HC, then 45),
+    INNER by raw row order - confirmed against ground truth's own layout.
+  - Effective/Expiry dates aren't given per ARBS row at all - ground truth
+    uses the filing's own OVERALL (untruncated) span, i.e. the earliest
+    snapshot's start through the latest snapshot's end (2026-09-01 to -15
+    here), not either individual snapshot's own truncated window.
+
+The Japan-origin scope ("EX.JP AEW"/"EX.JP AMW"/"Origin ARBS - EX JAPAN",
+surfaced as a third "JAPAN" output) is a later phase, not yet implemented
+here.
 """
 from __future__ import annotations
 
@@ -53,7 +80,7 @@ from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.parsers.tad_oew_omw import SPECIAL_NODE_ROUTE_NOTES
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema.charge_codes import CHARGE_CODE_NAMES
-from mrg2opus.schema.opus_rows import CmdtNoteRow, OpusRowSet, RatesRow, RouteNoteRow
+from mrg2opus.schema.opus_rows import ArbsRow, CmdtNoteRow, OpusRowSet, RatesRow, RouteNoteRow
 
 SHEET_AEW = "AEW"
 SHEET_AMW = "AMW"
@@ -78,6 +105,30 @@ DEFAULT_COMMODITY_CODE = "G0001"
 
 _HEA_OVERRIDE = "HEAVY SURCHARGE"
 
+SHEET_ARBS = "Origin ARBS"
+ARBS_COL_SCOPE = 1
+ARBS_COL_POINT, ARBS_COL_DESC, ARBS_COL_TRANSMODE, ARBS_COL_TERM = 3, 4, 5, 6
+ARBS_COL_OVER, ARBS_COL_VIA, ARBS_COL_CARGO_TYPE, ARBS_COL_CUR = 7, 8, 9, 10
+ARBS_COL_20, ARBS_COL_40, ARBS_COL_HC, ARBS_COL_45 = 11, 12, 13, 14
+
+# Cargo Type -> Per(*) prefix.
+_ARBS_PREFIX_BY_CARGO_TYPE: dict[str, str] = {
+    "Dry General": "D",
+    "Dry Dangerous": "D",
+    "Reefer": "R",
+    "Reefer Dry": "R",
+}
+# CGO Type is blank for every ARBS row EXCEPT "Reefer Dry" ones, which get
+# "DR" - confirmed against ground truth (every other combination, D2/D4/
+# D5/R2, is uniformly blank; only R5 rows sourced from a "Reefer Dry" raw
+# row - which only ever populates the HC/40hc rate column, never 20/40 -
+# get "DR" here, coincidentally matching the raw cargo type's own name).
+_ARBS_CGO_TYPE_BY_CARGO_TYPE: dict[str, str | None] = {"Reefer Dry": "DR"}
+# (Per(*) size suffix, RawArbsRow attribute) - order matters: this is the
+# OUTER loop order confirmed against ground truth's own ARBS row layout
+# (all 20' rows first, then all 40', then all 40HC, then any 45').
+_ARBS_SIZE_SLOTS = [("2", "rate_20"), ("4", "rate_40"), ("5", "rate_40hc"), ("7", "rate_45")]
+
 
 def _route_note_for(commodity_name: str, ts_port: str | None, service_lane: str | None) -> str | None:
     """Three independent route-note triggers, all confirmed against
@@ -97,8 +148,24 @@ def _route_note_for(commodity_name: str, ts_port: str | None, service_lane: str 
     return " | ".join(parts) if parts else None
 
 
+def _expand_arbs_term(value: object) -> str | None:
+    text = str(value or "").strip()
+    return {"D": "Door"}.get(text, text or None)
+
+
+def _raw_str_or_none(value: object) -> str | None:
+    """Strip if it's a string, otherwise pass the cell's literal value
+    through unchanged - a blank cell can be either "" or a true None in
+    these raw files, and ground truth's own output preserves whichever
+    one it actually is rather than normalizing both to the same thing."""
+    return value.strip() if isinstance(value, str) else value
+
+
 def _parse_decimal(text: str | None) -> Decimal | None:
-    if not text:
+    # A literal 0 is a real rate (confirmed: Origin ARBS has genuine $0
+    # entries) - `if not text` would treat that falsy int as "no value"
+    # and silently drop the row.
+    if text is None or text == "":
         return None
     try:
         return Decimal(str(text).replace(",", "").strip())
@@ -155,6 +222,7 @@ class RawRow:
 class ScopeData:
     scope: str
     rows: list[RawRow] = field(default_factory=list)
+    arbs_rows: list[ArbsRawRow] = field(default_factory=list)
 
 
 def _read_sheet(ws: Worksheet, scope: str) -> ScopeData:
@@ -193,10 +261,103 @@ def _read_sheet(ws: Worksheet, scope: str) -> ScopeData:
     return data
 
 
+@dataclass
+class ArbsRawRow:
+    point: str
+    description: str
+    trans_mode: str | None
+    term: str | None
+    over: str | None
+    via: str | None
+    cargo_type: str
+    cur: str | None
+    rate_20: Decimal | None
+    rate_40: Decimal | None
+    rate_40hc: Decimal | None
+    rate_45: Decimal | None
+
+
+def _read_arbs_sheet(ws: Worksheet, scope: str) -> list[ArbsRawRow]:
+    """One "Origin ARBS" sheet holds BOTH AEW and AMW rows together,
+    distinguished only by their own Service Scope column (confirmed - no
+    separate per-scope ARBS sheet exists)."""
+    rows: list[ArbsRawRow] = []
+    for row_idx in range(DATA_MIN_ROW, ws.max_row + 1):
+        if str(ws.cell(row=row_idx, column=ARBS_COL_SCOPE).value or "").strip() != scope:
+            continue
+        point = ws.cell(row=row_idx, column=ARBS_COL_POINT).value
+        if point in (None, ""):
+            continue
+        point_cell = ws.cell(row=row_idx, column=ARBS_COL_POINT)
+        if is_excluded(point_cell):
+            continue
+        rows.append(
+            ArbsRawRow(
+                point=str(point).strip(),
+                description=str(ws.cell(row=row_idx, column=ARBS_COL_DESC).value or "").strip(),
+                # Direct passthrough, no "or ''"/"or None" coercion -
+                # confirmed against ground truth the raw cell's own literal
+                # value survives verbatim: some blank Trans Mode cells are
+                # "" and some are a true blank (None), and ground truth
+                # preserves whichever one the raw cell actually is.
+                trans_mode=_raw_str_or_none(ws.cell(row=row_idx, column=ARBS_COL_TRANSMODE).value),
+                # Raw Term is abbreviated ("D" for Door, "CY" as-is) -
+                # confirmed against ground truth's own expanded "Door".
+                term=_expand_arbs_term(ws.cell(row=row_idx, column=ARBS_COL_TERM).value),
+                over=str(ws.cell(row=row_idx, column=ARBS_COL_OVER).value or "").strip() or None,
+                via=str(ws.cell(row=row_idx, column=ARBS_COL_VIA).value or "").strip() or None,
+                cargo_type=str(ws.cell(row=row_idx, column=ARBS_COL_CARGO_TYPE).value or "").strip(),
+                cur=str(ws.cell(row=row_idx, column=ARBS_COL_CUR).value or "").strip() or None,
+                rate_20=_parse_decimal(ws.cell(row=row_idx, column=ARBS_COL_20).value),
+                rate_40=_parse_decimal(ws.cell(row=row_idx, column=ARBS_COL_40).value),
+                rate_40hc=_parse_decimal(ws.cell(row=row_idx, column=ARBS_COL_HC).value),
+                rate_45=_parse_decimal(ws.cell(row=row_idx, column=ARBS_COL_45).value),
+            )
+        )
+    return rows
+
+
+def _build_arbs_rows(raw_rows: list[ArbsRawRow], validity_start: date | None, validity_end: date | None) -> list[ArbsRow]:
+    out: list[ArbsRow] = []
+    for suffix, attr in _ARBS_SIZE_SLOTS:
+        for rr in raw_rows:
+            value = getattr(rr, attr)
+            if value is None:
+                continue
+            prefix = _ARBS_PREFIX_BY_CARGO_TYPE.get(rr.cargo_type)
+            if prefix is None:
+                continue
+            if rr.over == rr.point:
+                # Confirmed against ground truth: a row "transshipping"
+                # via its own origin point never appears in the output -
+                # excluded entirely, not just a same-code no-op.
+                continue
+            out.append(
+                ArbsRow(
+                    point=rr.point,
+                    description=rr.description,
+                    trans_mode=rr.trans_mode,
+                    term=rr.term,
+                    over=rr.over,
+                    via=rr.via,
+                    per=f"{prefix}{suffix}",
+                    cgo_type=_ARBS_CGO_TYPE_BY_CARGO_TYPE.get(rr.cargo_type),
+                    cur=rr.cur,
+                    proposal=value,
+                    eff_date=validity_start,
+                    exp_date=validity_end,
+                )
+            )
+    return out
+
+
 class TADAewAmwParser(BaseMRGParser):
     lane_id: ClassVar[str] = "TAD-AEW-AMW"
     SHEET_NAME_OVERRIDES: ClassVar[dict[str, str]] = {"route_notes": "ROUTE NOTE"}
-    SCOPED_SHEET_NAME_OVERRIDES: ClassVar[dict[str, dict[str, str]]] = {"AEW": {"cmdt_notes": "SRCHG"}}
+    SCOPED_SHEET_NAME_OVERRIDES: ClassVar[dict[str, dict[str, str]]] = {
+        "AEW": {"cmdt_notes": "SRCHG", "arbs": "AEW ARBS"},
+        "AMW": {"arbs": "ORIGIN ARBS"},
+    }
 
     @classmethod
     def detect(cls, wb: Workbook) -> float:
@@ -212,12 +373,16 @@ class TADAewAmwParser(BaseMRGParser):
 
     def parse_raw(self, wb: Workbook) -> RawExtraction:
         scopes: dict[str, ScopeData] = {}
+        # Origin ARBS is byte-identical across snapshot occurrences (no
+        # rate correction there) - only the first is parsed, not merged.
+        arbs_sheet_names = find_snapshot_sheets(wb, SHEET_ARBS)
         for scope_name in (SHEET_AEW, SHEET_AMW):
             sheet_names = find_snapshot_sheets(wb, scope_name)
             if not sheet_names:
                 continue
             occurrences = [_read_sheet(wb[name], scope_name).rows for name in sheet_names]
-            scopes[scope_name] = ScopeData(scope=scope_name, rows=merge_dated_snapshots(occurrences))
+            arbs_rows = _read_arbs_sheet(wb[arbs_sheet_names[0]], scope_name) if arbs_sheet_names else []
+            scopes[scope_name] = ScopeData(scope=scope_name, rows=merge_dated_snapshots(occurrences), arbs_rows=arbs_rows)
         return RawExtraction(tables={"scopes": scopes})
 
     def _build_one_scope(self, data: ScopeData, config: MappingProfile) -> OpusRowSet:
@@ -329,7 +494,14 @@ class TADAewAmwParser(BaseMRGParser):
                 )
             )
 
-        return OpusRowSet(rates=rates, cmdt_notes=cmdt_notes, route_notes=route_notes)
+        # Origin ARBS isn't validity-windowed per row like RATES/CMDT NOTE -
+        # ground truth uses the filing's own OVERALL (untruncated) span:
+        # the earliest snapshot's start through the latest's end.
+        arbs_validity_start = min((k[0] for k in group_order if k[0] is not None), default=None)
+        arbs_validity_end = max((k[1] for k in group_order if k[1] is not None), default=None)
+        arbs = _build_arbs_rows(data.arbs_rows, arbs_validity_start, arbs_validity_end)
+
+        return OpusRowSet(rates=rates, cmdt_notes=cmdt_notes, route_notes=route_notes, arbs=arbs)
 
     def _build_cmdt_notes(
         self,

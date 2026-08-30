@@ -7,7 +7,7 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from mrg2opus.audit.compare import _normalize, diff_by_key, rates_row_key, read_rates_sheet
+from mrg2opus.audit.compare import _normalize, diff_by_key, rates_row_key, read_arbs_sheet, read_rates_sheet
 from mrg2opus.excel_io.merge import merge_workbooks
 from mrg2opus.parsers.tad_aew_amw import TADAewAmwParser
 from mrg2opus.presets.models import MappingProfile
@@ -246,3 +246,43 @@ def test_tad_aew_amw_multi_snapshot_merge_truncates_earlier_validity():
     windows = {(n.application_effective, n.application_expires) for n in row_set.cmdt_notes if n.code == "APP"}
     assert (date(2026, 9, 1), date(2026, 9, 6)) in windows
     assert (date(2026, 9, 7), date(2026, 9, 15)) in windows
+
+
+def _arbs_key(row: dict) -> tuple:
+    return (row.get("point"), row.get("over"), row.get("via"), row.get("per"))
+
+
+@pytest.mark.parametrize("scope,sheet", [("AEW", "AEW ARBS"), ("AMW", "ORIGIN ARBS")])
+def test_tad_aew_amw_arbs_matches_ground_truth(scope, sheet):
+    """AEW's own ARBS sheet is scope-prefixed ("AEW ARBS"), AMW's is bare
+    ("ORIGIN ARBS", no scope tag at all) - another real naming drift on
+    top of the CMDT NOTE one (see SCOPED_SHEET_NAME_OVERRIDES)."""
+    row_set = _run_tad(AEW_RFA_EFFECTIVE if scope == "AEW" else AMW_RFA_EFFECTIVE)[scope]
+    generated = [r.model_dump() for r in row_set.arbs]
+
+    ref_wb = openpyxl.load_workbook(GROUND_TRUTH[scope], data_only=True, read_only=True)
+    expected = read_arbs_sheet(ref_wb, sheet)
+
+    gk = {_arbs_key(r): r for r in generated}
+    ek = {_arbs_key(r): r for r in expected}
+    assert set(gk) == set(ek), f"missing={set(ek) - set(gk)}, extra={set(gk) - set(ek)}"
+    for key, g in gk.items():
+        e = ek[key]
+        for field_name in ("description", "trans_mode", "term", "cur", "proposal", "eff_date", "exp_date", "cgo_type"):
+            gv, ev = _normalize(g.get(field_name)), _normalize(e.get(field_name))
+            assert gv == ev, f"{key} {field_name}: {gv!r} != {ev!r}"
+
+
+def test_tad_aew_amw_arbs_drops_self_transshipment_rows():
+    """Confirmed against ground truth: a raw row whose "Over" equals its
+    own origin Point (CNXMN transshipping via CNXMN) never survives into
+    the output - not even as a same-code no-op."""
+    row_set = _run_tad(AEW_RFA_EFFECTIVE)["AEW"]
+    assert not any(a.point == a.over for a in row_set.arbs)
+
+
+def test_tad_aew_amw_arbs_keeps_zero_rates():
+    """A literal $0 ARBS rate is real data (confirmed: VNBHA's own raw
+    row), not a "blank means no value" case - must not be dropped."""
+    row_set = _run_tad(AEW_RFA_EFFECTIVE)["AEW"]
+    assert any(a.point == "VNBHA" and a.proposal == 0 for a in row_set.arbs)
