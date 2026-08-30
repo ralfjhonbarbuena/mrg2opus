@@ -28,6 +28,22 @@ fresh clone:
 ./.venv/Scripts/python.exe -m pytest -q     # ~5 min, exercises every lane
 ```
 
+### Deploying to Streamlit Cloud
+
+Point it at **`streamlit_app.py`** in the repo root - not `mrg2opus/ui/app.py`.
+`streamlit run` puts the script's own folder on `sys.path`, so running the
+app module directly leaves the repo root off the path and the first import
+fails with a redacted `ModuleNotFoundError`. `streamlit_app.py` sits at the
+root, which fixes that by construction, and is the filename Streamlit Cloud
+looks for by default.
+
+`requirements.txt` deliberately lists only the direct dependencies with
+lower bounds. An exact `pip freeze` (which is what `requirements-lock.txt`
+holds) pins builds resolved for this machine's OS and Python, and a host
+running anything else may find no matching wheel - the install then fails
+and the app dies at import, again pointing at our code rather than the
+dependency that never installed.
+
 Substitute `.venv/bin/python` for `.venv/Scripts/python.exe` on macOS and
 Linux throughout this file. The clone is ~35 MB, nearly all of it the
 `reference/` filings; `--depth 1` skips the history if that matters.
@@ -91,7 +107,7 @@ rounds of Step 3 editing even after overrides are applied.
 **Web UI (Phase 2, recommended):**
 
 ```bash
-./.venv/Scripts/python.exe -m streamlit run mrg2opus/ui/app.py
+./.venv/Scripts/python.exe -m streamlit run streamlit_app.py
 ```
 
 Opens a 4-step wizard: upload & classify → preview → customize (commodity
