@@ -1,13 +1,19 @@
-"""West Asia to WAF/SAF/EAF/MZ combined lane - EXPLORATORY, UNVERIFIED.
+"""West Asia to WAF/SAF/EAF/MZ combined lane.
 
 reference/1_MRGs/13-14_West Asia to WAF_SAF_EAF_MZ is one workbook with 4
 sheets: "West Asia - West Africa", "West Asia - South Africa", "West Asia -
-East Africa", "West Asia - Mozambique". No reference/2_OPUS ground truth
-exists for this raw file at all, so unlike every other lane in this
-codebase, none of this module's business rules are ground-truth-confirmed
-- it's a first-draft, structurally-consistent-with-the-rest-of-the-codebase
-best effort, built for the user to review before it's trusted or tested
-like the other lanes.
+East Africa", "West Asia - Mozambique".
+
+**No reference/2_OPUS ground truth exists for this raw file at all**, so
+unlike every other lane here, none of this module's business rules are
+ground-truth-confirmed - they're carried over from conventions verified on
+other lanes. The user reviewed the generated output for both reference
+weeks and approved registering it (2026-08-30); treat any specific rule
+below as "consistent with the rest of the codebase", not "confirmed",
+and re-check it the moment a real OPUS file for this lane turns up.
+One example still open: the ROUTE NOTE sheet name. This lane uses the
+project default ("RN", confirmed against LAWC's real ground truth) rather
+than TAD's "ROUTE NOTE" - unverified either way for this lane.
 
 The WEST AFRICA sheet is byte-for-byte the same layout as the already-built
 WEST-ASIA-WAF lane (same title text "West Asia WAF FAK rate guideline",
@@ -77,6 +83,7 @@ from mrg2opus.parsers.common.exclusion import is_excluded
 from mrg2opus.parsers.common.header_grid import flatten_pod_header
 from mrg2opus.parsers.common.ordering import group_by_destination
 from mrg2opus.parsers.common.sequencing import assign_cmdt_seq_numbers
+from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.parsers.west_asia_waf import WestAsiaWAFParser
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema.charge_codes import CHARGE_CODE_NAMES, is_known_charge_code
@@ -541,8 +548,23 @@ class WestAsiaMultiParser(BaseMRGParser):
         return result
 
 
-# Deliberately NOT registered via registry.register()/LayoutProfile yet:
-# with no ground truth to verify against, this is a draft for manual
-# review, not a lane the UI/CLI's auto-detection should route real files
-# into. Run it directly (WestAsiaMultiParser().run_multi(wb)) until the
-# user confirms the output and it graduates to a tested, registered lane.
+# The three SAF/EAF/MZ sheet names are what separate this lane from
+# WEST-ASIA-WAF, which would otherwise WIN on a combined upload: its own
+# r"^West Asia" pattern matches all four sheets, scoring it 80% here, and
+# it would then silently emit only the West Africa sheet's rows. These
+# patterns plus the per-sheet title keywords score this lane 100% on a
+# combined file and 30% on a WAF-only one (below WEST-ASIA-WAF's own 80%
+# there), so each file still reaches the right parser.
+register(
+    LayoutProfile(
+        lane_id=WestAsiaMultiParser.lane_id,
+        parser_cls=WestAsiaMultiParser,
+        sheet_name_patterns=[
+            r"^West Asia - South Africa$",
+            r"^West Asia - East Africa$",
+            r"^West Asia - Mozambique$",
+        ],
+        title_keywords=["WEST ASIA SAF", "WEST ASIA EAF", "WEST ASIA MZ"],
+        header_fingerprint=["D2", "D4", "D5"],
+    )
+)

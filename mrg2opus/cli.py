@@ -18,7 +18,7 @@ import openpyxl
 
 # Importing the lane modules registers their LayoutProfile as a side effect.
 from mrg2opus.parsers import (  # noqa: F401
-    aubp, auec, auwc, cse, eaf, laec, lawc, nz1_sea, nzj, saf, tad_aew_amw, tad_oew_omw, tad_wmw_wew, waf, west_asia_waf,
+    aubp, auec, auwc, cse, eaf, laec, lawc, nz1_sea, nzj, saf, tad_aew_amw, tad_oew_omw, tad_wmw_wew, waf, west_asia_multi, west_asia_waf,
 )
 from mrg2opus.parsers.registry import classify
 from mrg2opus.excel_io.merge import merge_workbooks
