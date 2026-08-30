@@ -83,10 +83,18 @@ class MappingProfile(BaseModel):
     # Adds an OPUS VERTICAL RATES sheet (a "long format" alternate upload -
     # one row per container size instead of RATES' 4-slots-per-row layout;
     # per the user, faster to upload but capped at 10,000 rows per file).
-    # Off by default, applies uniformly to whichever lane is running - see
-    # schema/opus_rows.py::build_vertical_rates(), applied in
-    # ui/parsing.py::run_parser().
-    include_vertical_rates: bool = False
+    # ON by default for every lane (user-directed 2026-08-30, "add the
+    # vertical rates for all MRGs") - see schema/opus_rows.py::
+    # build_vertical_rates(), applied in pipeline.py::run_parser() so the
+    # CLI and the UI both get it.
+    #
+    # NOTE the 10,000-row cap is a real limit this can exceed: exploding
+    # RATES into one row per container size roughly triples the row count,
+    # so a large lane overruns it (CSE ~11.9k, LAWC ~19.1k rows on their
+    # own reference files). Nothing here truncates or splits - the count is
+    # surfaced instead (CLI output, and a Step 2 warning) so the filer can
+    # decide, since how to split a filing is their call, not the tool's.
+    include_vertical_rates: bool = True
     # TAD FILING lanes only (OEW/OMW, WMW/WEW, AEW/AMW): mirrors the team's
     # own "Tool for TAD.xlsm" VBA export's "Include Dry Dangerous" toggle -
     # duplicates every D/DR row as an identical D/DG row at the same rate.

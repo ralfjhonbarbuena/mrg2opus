@@ -23,6 +23,7 @@ from mrg2opus.parsers import (  # noqa: F401
 from mrg2opus.parsers.registry import classify
 from mrg2opus.excel_io.merge import merge_workbooks
 from mrg2opus.excel_io.writer import write_opus_workbook_multi
+from mrg2opus.pipeline import VERTICAL_RATES_ROW_CAP, run_parser, vertical_rates_over_cap
 from mrg2opus.presets.models import MappingProfile
 
 
@@ -32,16 +33,28 @@ def parse_command(args: argparse.Namespace) -> None:
     result = classify(wb)
     print(f"Classified as lane={result.profile.lane_id} confidence={result.confidence:.2f} breakdown={result.breakdown}")
 
-    parser = result.profile.parser_cls()
-    row_sets = parser.run_multi(wb, MappingProfile())
+    parser_cls = result.profile.parser_cls
+    row_sets = run_parser(parser_cls(), wb, MappingProfile())
 
-    write_opus_workbook_multi(row_sets, args.out)
+    write_opus_workbook_multi(
+        row_sets,
+        args.out,
+        sheet_name_overrides=parser_cls.SHEET_NAME_OVERRIDES,
+        scoped_sheet_name_overrides=parser_cls.SCOPED_SHEET_NAME_OVERRIDES,
+    )
     for suffix, row_set in row_sets.items():
         label = suffix or "(default)"
         print(
             f"[{label}] {len(row_set.rates)} RATES, {len(row_set.rates_port_port)} RATES PORT-PORT, "
             f"{len(row_set.arbs)} ARBS, {len(row_set.cmdt_notes)} CMDT NOTE, "
-            f"{len(row_set.special_notes)} SPECIAL NOTE rows"
+            f"{len(row_set.special_notes)} SPECIAL NOTE, "
+            f"{len(row_set.route_notes)} ROUTE NOTE, {len(row_set.vertical_rates)} VERTICAL RATES rows"
+        )
+    for (suffix, cmdt_seq), count in vertical_rates_over_cap(row_sets).items():
+        print(
+            f"WARNING: [{suffix or '(default)'}] VERTICAL RATES {cmdt_seq} has {count:,} rows, over the "
+            f"{VERTICAL_RATES_ROW_CAP:,}-row OPUS upload limit. It is already one sheet per CMDT Seq, so "
+            "this commodity group is too big to upload as vertical rates - split it or use RATES instead."
         )
     print(f"Wrote {args.out}")
 

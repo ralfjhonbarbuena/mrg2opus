@@ -7,7 +7,7 @@ from mrg2opus.parsers.registry import get_profile
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.ui.commodity_utils import assign_sequential_default_codes, distinct_commodity_groups
 from mrg2opus.ui.errors import show_error
-from mrg2opus.ui.parsing import run_parser
+from mrg2opus.ui.parsing import VERTICAL_RATES_ROW_CAP, run_parser, vertical_rates_over_cap
 from mrg2opus.ui.state import WizardState
 
 SHEET_KEYS = ["rates", "rates_port_port", "arbs", "cmdt_notes", "special_notes"]
@@ -111,6 +111,22 @@ def render(state: WizardState) -> None:
         st.warning(
             "No rows were produced at all - this usually means the wrong lane was selected, or every row "
             "failed Location Bank resolution. Go back and double-check the lane."
+        )
+
+    # VERTICAL RATES is written one sheet per CMDT Seq, which keeps every
+    # lane seen so far under the limit. Warn only about a single commodity
+    # group that is still too big - the one case splitting can't fix.
+    over_cap = vertical_rates_over_cap(row_sets)
+    if over_cap:
+        detail = ", ".join(
+            f"{suffix or '(default)'} VERTICAL RATES {cmdt_seq} ({count:,} rows)"
+            for (suffix, cmdt_seq), count in over_cap.items()
+        )
+        st.warning(
+            f"Over the {VERTICAL_RATES_ROW_CAP:,}-row OPUS upload limit: {detail}. Vertical rates are "
+            "already split one sheet per CMDT Seq, so this commodity group is too big to upload that way - "
+            "upload its RATES sheet instead, or split the group. You can also turn VERTICAL RATES off in "
+            "Customize."
         )
 
     st.markdown("#### Data preview")

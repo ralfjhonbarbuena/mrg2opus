@@ -169,6 +169,45 @@ def explode_to_vertical_rates(row: RatesRow) -> list[VerticalRatesRow]:
     return out
 
 
+def group_vertical_rates_by_cmdt_seq(
+    rows: list[VerticalRatesRow],
+) -> list[tuple[Optional[int], list[VerticalRatesRow]]]:
+    """Split exploded vertical rates into one group per CMDT Seq, keeping
+    the order they were built in.
+
+    OPUS caps how many rows one upload may carry, and exploding RATES into
+    a row per container size roughly triples the count - so a big lane
+    overruns it as a single sheet but fits comfortably once split by
+    commodity group (see excel_io/writer.py, which writes one numbered
+    sheet per group).
+
+    Grouping reads cmdt_seq off the rows themselves rather than taking it
+    as an argument, which works because explode_to_vertical_rates() writes
+    the header fields onto the FIRST row of each source RatesRow and
+    blanks them on that row's continuation rows - so the last non-None
+    value carries forward. A lane whose rows carry no cmdt_seq at all
+    degrades to a single group.
+
+    Buckets by cmdt_seq rather than by adjacency, because a commodity
+    group's rows are NOT always contiguous: LAWC files its NOR rows under
+    the SEA group, so group 2 appears as two separate runs. Grouping on
+    adjacency emitted two sheets both named for group 2, and openpyxl
+    silently renamed the second - splitting one commodity group across two
+    misleadingly-named sheets. One group is always one sheet.
+    """
+    buckets: dict[Optional[int], list[VerticalRatesRow]] = {}
+    order: list[Optional[int]] = []
+    current: Optional[int] = None
+    for row in rows:
+        if row.cmdt_seq is not None:
+            current = row.cmdt_seq
+        if current not in buckets:
+            buckets[current] = []
+            order.append(current)
+        buckets[current].append(row)
+    return [(seq, buckets[seq]) for seq in order]
+
+
 def build_vertical_rates(row_set: "OpusRowSet") -> "OpusRowSet":
     """User-toggled (MappingProfile.include_vertical_rates), applied
     uniformly across every lane by ui/parsing.py::run_parser() - not
