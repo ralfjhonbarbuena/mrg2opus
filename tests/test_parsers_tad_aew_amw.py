@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+from collections import Counter
 from datetime import date
 from pathlib import Path
 
@@ -19,10 +20,16 @@ OPUS_DIR = REFERENCE_DIR / "2_OPUS" / "23_TAD FILING AEW AMW"
 
 RAW_PATH_WEEK1 = RAW_DIR / "Sep MRG dated 20th Aug (AEWAMW).xlsx"
 RAW_PATH_WEEK2 = RAW_DIR / "Sep MRG dated 27th Aug (AEWAMW).xlsx"
-GROUND_TRUTH = {"AEW": OPUS_DIR / "AEW POLLY.xlsx", "AMW": OPUS_DIR / "AMW POLLY.xlsx"}
+RAW_PATH_JP = RAW_DIR / "AE WB Sep MRG Dated 20 Aug (AEWAMW ex.JP).xlsx"
+RAW_PATHS = [RAW_PATH_WEEK1, RAW_PATH_WEEK2, RAW_PATH_JP]
+GROUND_TRUTH = {
+    "AEW": OPUS_DIR / "AEW POLLY.xlsx",
+    "AMW": OPUS_DIR / "AMW POLLY.xlsx",
+    "JAPAN": OPUS_DIR / "JAPAN POLLY.xlsx",
+}
 
 pytestmark = pytest.mark.skipif(
-    not RAW_PATH_WEEK1.exists() or not RAW_PATH_WEEK2.exists() or any(not p.exists() for p in GROUND_TRUTH.values()),
+    any(not p.exists() for p in RAW_PATHS) or any(not p.exists() for p in GROUND_TRUTH.values()),
     reason="reference/ ground-truth files not present in this checkout",
 )
 
@@ -37,6 +44,16 @@ RATES_IGNORE_FIELDS = {"type", "cmdt_seq", "commodity_note"}
 RFA_EXPIRY = date(2026, 12, 31)
 AEW_RFA_EFFECTIVE = date(2026, 8, 30)
 AMW_RFA_EFFECTIVE = date(2026, 8, 19)
+
+# The Japan scopes drift the same way again: Japan-AEW's own SRCHG children
+# use the plain rate-validity window (2026-09-01 to -30, i.e. no RFA
+# override at all) while Japan-AMW's use 2026-08-30 to 2026-12-31. The DG
+# duplicate toggle also differs - ON for the main scopes, OFF for Japan -
+# and it too is filing-wide, so each Japan scope gets its own profile.
+JP_VALIDITY_START = date(2026, 9, 1)
+JP_VALIDITY_END = date(2026, 9, 30)
+JP_AEW_RFA = (JP_VALIDITY_START, JP_VALIDITY_END)
+JP_AMW_RFA = (date(2026, 8, 30), RFA_EXPIRY)
 
 
 def _normalize_export_punctuation_rows(rows: list[dict]) -> list[dict]:
@@ -133,21 +150,31 @@ def _route_notes_by_rates_identity(route_notes: list[dict], rates: list[dict]) -
 
 @functools.lru_cache(maxsize=1)
 def _load_merged_workbook():
-    """Both raw files are wide (100 columns x ~900 rows x 3 sheets each) -
-    merge_workbooks() touches every cell in that range, so reloading and
-    re-merging per test made this module alone take 8+ minutes. Cached
-    once; every test here only reads the result, never mutates it."""
-    wb1 = openpyxl.load_workbook(RAW_PATH_WEEK1, data_only=True)
-    wb2 = openpyxl.load_workbook(RAW_PATH_WEEK2, data_only=True)
-    return merge_workbooks([wb1, wb2], names=[RAW_PATH_WEEK1.name, RAW_PATH_WEEK2.name])
+    """All three raw files are wide (100 columns x ~900 rows x 3 sheets
+    each) - merge_workbooks() touches every cell in that range, so
+    reloading and re-merging per test made this module alone take 8+
+    minutes. Cached once; every test here only reads the result, never
+    mutates it."""
+    wbs = [openpyxl.load_workbook(p, data_only=True) for p in RAW_PATHS]
+    return merge_workbooks(wbs, names=[p.name for p in RAW_PATHS])
 
 
 @functools.lru_cache(maxsize=None)
 def _run_tad(rfa_effective: date) -> dict:
+    """The main AEW/AMW scopes' settings: both toggles on, matching this
+    filing round's own real settings."""
     profile = MappingProfile(
         rfa_effective_date=rfa_effective, rfa_expiry_date=RFA_EXPIRY,
         include_tad_d7=True, generate_tad_dg_duplicate=True,
     )
+    return TADAewAmwParser().run_multi(_load_merged_workbook(), profile)
+
+
+@functools.lru_cache(maxsize=None)
+def _run_tad_jp(rfa: tuple[date, date]) -> dict:
+    """The Japan scopes' settings: DG duplication off (and D7 never
+    applies there at all) - see the module docstring's inconsistency note."""
+    profile = MappingProfile(rfa_effective_date=rfa[0], rfa_expiry_date=rfa[1])
     return TADAewAmwParser().run_multi(_load_merged_workbook(), profile)
 
 
@@ -286,3 +313,159 @@ def test_tad_aew_amw_arbs_keeps_zero_rates():
     row), not a "blank means no value" case - must not be dropped."""
     row_set = _run_tad(AEW_RFA_EFFECTIVE)["AEW"]
     assert any(a.point == "VNBHA" and a.proposal == 0 for a in row_set.arbs)
+
+
+# --- Japan-origin scope -----------------------------------------------
+#
+# JAPAN POLLY.xlsx is the team's VBA tool caught mid-pipeline, not a
+# finished OPUS filing (see the parser's module docstring): Descriptions
+# blank, Commodity Note still the raw charge-code CSV, CMDT/Route Seq
+# blank. This parser deliberately produces the COMPLETE output instead, so
+# only the columns ground truth actually derived are compared.
+JP_RATES_IGNORE_FIELDS = RATES_IGNORE_FIELDS | {"route_seq", "origin_description", "destination_description"}
+
+
+@pytest.mark.parametrize(
+    "scope,sheet,rfa",
+    [("JAPAN AEW", "AEW RATES", JP_AEW_RFA), ("JAPAN AMW", "AMW RATES", JP_AMW_RFA)],
+)
+def test_tad_aew_amw_japan_rates_matches_ground_truth(scope, sheet, rfa):
+    row_set = _run_tad_jp(rfa)[scope]
+    generated = [r.model_dump() for r in row_set.rates]
+
+    ref_wb = openpyxl.load_workbook(GROUND_TRUTH["JAPAN"], data_only=True, read_only=True)
+    expected = read_rates_sheet(ref_wb, sheet)
+
+    result = diff_by_key(
+        generated, expected, key_fn=rates_row_key, fields=cols.RATES_ROW_FIELDS, ignore_fields=JP_RATES_IGNORE_FIELDS
+    )
+    assert not result.missing, f"missing {len(result.missing)} expected rows, e.g. {list(result.missing)[:5]}"
+    assert not result.extra, f"{len(result.extra)} unexpected generated rows, e.g. {list(result.extra)[:5]}"
+    assert not result.field_mismatches, f"{len(result.field_mismatches)} field mismatches, e.g. {result.field_mismatches[:10]}"
+
+
+@pytest.mark.parametrize(
+    "scope,sheet,rfa",
+    [("JAPAN AEW", "AEW SRCHG", JP_AEW_RFA), ("JAPAN AMW", "AMW SRCHG", JP_AMW_RFA)],
+)
+def test_tad_aew_amw_japan_cmdt_note_matches_ground_truth(scope, sheet, rfa):
+    """One block each, 4 child codes (CAF/CSS/EFS/MBS - notably shorter
+    than the main scopes' list, straight off the raw rows' own column)."""
+    row_set = _run_tad_jp(rfa)[scope]
+    generated = [n.model_dump() for n in row_set.cmdt_notes]
+
+    ref_wb = openpyxl.load_workbook(GROUND_TRUTH["JAPAN"], data_only=True, read_only=True)
+    expected = _read_shifted_sheet(ref_wb, sheet, cols.CMDT_NOTE_ROW_FIELDS)
+
+    assert len(generated) == len(expected) == 5
+    ignore = {"header_seq", "note_seq"}
+    for i, (g, e) in enumerate(zip(generated, expected)):
+        for field_name in cols.CMDT_NOTE_ROW_FIELDS:
+            if field_name in ignore:
+                continue
+            gv, ev = _normalize(g.get(field_name)), _normalize(e.get(field_name))
+            # This one sheet's Contents carries literal "_x000D_" escapes
+            # from however it was written; the text is otherwise identical.
+            if isinstance(gv, str) and isinstance(ev, str):
+                ev = ev.replace("_x000D_", "")
+            assert gv == ev, f"row {i} {field_name}: {gv!r} != {ev!r}"
+
+
+def test_tad_aew_amw_japan_commodity_group_differs_per_subscope():
+    """Both Japan sub-scopes share the description "FAK - JAPAN" but carry
+    genuinely different default codes - confirmed, not a typo."""
+    aew = _run_tad_jp(JP_AEW_RFA)["JAPAN AEW"]
+    amw = _run_tad_jp(JP_AMW_RFA)["JAPAN AMW"]
+    assert {r.commodity_group_code for r in aew.rates} == {"G0011"}
+    assert {r.commodity_group_code for r in amw.rates} == {"G0001"}
+    assert {r.commodity_group_description for r in aew.rates + amw.rates} == {"FAK - JAPAN"}
+
+
+def test_tad_aew_amw_japan_never_generates_d7():
+    """The OFT 45 add-on is AEW/AMW-only - even with the toggle explicitly
+    on, the Japan scopes must not produce a rate_45."""
+    profile = MappingProfile(
+        rfa_effective_date=JP_VALIDITY_START, rfa_expiry_date=JP_VALIDITY_END, include_tad_d7=True
+    )
+    row_sets = TADAewAmwParser().run_multi(_load_merged_workbook(), profile)
+    for scope in ("JAPAN AEW", "JAPAN AMW"):
+        assert all(r.rate_45 is None for r in row_sets[scope].rates), scope
+
+
+def test_tad_aew_amw_japan_aew_has_no_route_notes():
+    """No T/S Port, Service Lane, or special-node tag on any AEW-Japan raw
+    row - confirmed against JAPAN POLLY's own ROUTE sheet, which carries
+    AMW rows only."""
+    assert _run_tad_jp(JP_AEW_RFA)["JAPAN AEW"].route_notes == []
+
+
+def test_tad_aew_amw_japan_amw_route_notes_match_ground_truth():
+    """JAPAN POLLY's RATES sheet leaves CMDT/Route Seq blank, so its ROUTE
+    rows can't be joined back to a RATES identity the way the main scopes'
+    can - compared as a content multiset instead, the strongest check the
+    ground truth actually supports."""
+    generated = [n.model_dump() for n in _run_tad_jp(JP_AMW_RFA)["JAPAN AMW"].route_notes]
+
+    ref_wb = openpyxl.load_workbook(GROUND_TRUTH["JAPAN"], data_only=True, read_only=True)
+    expected = _read_shifted_sheet(ref_wb, "ROUTE", cols.RN_ROW_FIELDS)
+
+    def summary(rows):
+        return Counter(
+            (
+                r.get("contents"),
+                r.get("code"),
+                _normalize(r.get("charge_seq")),
+                r.get("application"),
+                _normalize(r.get("application_effective")),
+                _normalize(r.get("application_expires")),
+            )
+            for r in rows
+        )
+
+    assert summary(generated) == summary(expected)
+
+
+@pytest.mark.parametrize(
+    "scope,sheet,rfa",
+    [("JAPAN AEW", "ORIGIN ARBS AEW", JP_AEW_RFA), ("JAPAN AMW", "ORIGIN ARBS AMW", JP_AMW_RFA)],
+)
+def test_tad_aew_amw_japan_arbs_matches_ground_truth(scope, sheet, rfa):
+    """Compared as a multiset: unlike the main sheets, a Japan ARBS route
+    can carry both a Dry General and a Dry Dangerous raw row, so
+    (point, over, via, per) alone isn't a unique key - cgo_type is what
+    separates them."""
+    generated = [r.model_dump() for r in _run_tad_jp(rfa)[scope].arbs]
+
+    ref_wb = openpyxl.load_workbook(GROUND_TRUTH["JAPAN"], data_only=True, read_only=True)
+    expected = read_arbs_sheet(ref_wb, sheet)
+
+    def summary(rows):
+        return Counter(
+            (
+                r.get("point"), r.get("over"), r.get("via"), r.get("per"), r.get("cgo_type"),
+                r.get("description"), r.get("trans_mode"), r.get("term"), r.get("cur"),
+                _normalize(r.get("proposal")), _normalize(r.get("eff_date")), _normalize(r.get("exp_date")),
+            )
+            for r in rows
+        )
+
+    assert summary(generated) == summary(expected)
+
+
+def test_tad_aew_amw_japan_arbs_stamps_cargo_type_on_dry_rows():
+    """The two ARBS sheets in this same filing use different CGO Type
+    conventions (see _ARBS_CGO_TYPE_MAIN vs _ARBS_CGO_TYPE_JP): the Japan
+    one stamps DR/DG on dry rows where the main one leaves them blank."""
+    jp_arbs = _run_tad_jp(JP_AEW_RFA)["JAPAN AEW"].arbs
+    main_arbs = _run_tad(AEW_RFA_EFFECTIVE)["AEW"].arbs
+    assert {a.cgo_type for a in jp_arbs if a.per.startswith("D")} == {"DR", "DG"}
+    assert {a.cgo_type for a in main_arbs if a.per.startswith("D")} == {None}
+
+
+def test_tad_aew_amw_japan_arbs_duplicates_the_copies_in_the_main_files():
+    """AEW/AMW POLLY.xlsx each bundle a copy of the Japan ARBS ("AEW ARBS
+    JP" / "ORIGIN ARBS JP") that is byte-identical to JAPAN POLLY's own -
+    this parser emits it once, under the Japan scopes, rather than twice."""
+    ref_jp = openpyxl.load_workbook(GROUND_TRUTH["JAPAN"], data_only=True, read_only=True)
+    ref_aew = openpyxl.load_workbook(GROUND_TRUTH["AEW"], data_only=True, read_only=True)
+    assert read_arbs_sheet(ref_jp, "ORIGIN ARBS AEW") == read_arbs_sheet(ref_aew, "AEW ARBS JP")

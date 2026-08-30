@@ -57,9 +57,47 @@ differences confirmed against reference/2_OPUS/23_TAD FILING AEW AMW:
     snapshot's start through the latest snapshot's end (2026-09-01 to -15
     here), not either individual snapshot's own truncated window.
 
-The Japan-origin scope ("EX.JP AEW"/"EX.JP AMW"/"Origin ARBS - EX JAPAN",
-surfaced as a third "JAPAN" output) is a later phase, not yet implemented
-here.
+- **The Japan-origin scope** arrives as its own separate raw file
+  ("EX.JP AEW"/"EX.JP AMW"/"Origin ARBS - EX JAPAN") in the same 22-column
+  DATA shape, and surfaces as two more run_multi() scopes (SCOPE_JP_AEW/
+  SCOPE_JP_AMW) rather than being folded into the main two:
+  - It files under its OWN commodity group, "FAK - JAPAN", with a
+    different default code per sub-scope (AEW G0011, AMW G0001 -
+    confirmed, and yes they genuinely differ).
+  - Its own validity window (2026-09-01 to -30, a whole month vs the main
+    scopes' fortnight) and its own SHORTER charge-code list (CAF/CSS/EFS/
+    MBS - no HEA/LSF) come straight off its own rows' columns, so no
+    special-casing is needed for either.
+  - No D7: the OFT 45 add-on is AEW/AMW-only (the raw "Surcharges"
+    reference sheet scopes it that way, and the Japan ground truth has no
+    rate_45 anywhere) - see ScopeData.supports_d7.
+  - AEW-Japan produces NO route notes at all (no T/S Port, Service Lane,
+    or special-node tag on any of its rows); AMW-Japan produces 35, from
+    the same HAYDARPASA/MARPORT special-node table as the main scopes.
+  - Its ARBS is byte-identical to the copies bundled into the main files
+    as "AEW ARBS JP"/"ORIGIN ARBS JP" (verified row-for-row) - emitted
+    once here under the Japan scopes rather than duplicated, since the
+    later per-file splitting step (see project_tad_vba_tool_analysis
+    memory) is what assembles the real deliverables anyway.
+
+  **On its ground truth**: unlike AEW/AMW POLLY.xlsx, JAPAN POLLY.xlsx is
+  NOT a finished OPUS filing - it's the team's VBA tool caught at its
+  DATA->RATES bulk-copy step: origin/destination Descriptions still blank,
+  Commodity Note still holding the raw "CAF,CSS,EFS,MBS" CSV instead of
+  the built note text, CMDT/Route Seq still blank, and 4 extra VBA working
+  columns (Start Date, End Date, Lanes, cargo type) hanging off the end.
+  Per the user's confirmed "full replacement, not a DATA-shaped
+  intermediate" decision, this parser produces a COMPLETE OPUS output for
+  the Japan scope like every other lane - so only the columns that ground
+  truth actually derived are comparable, and the tests ignore the rest.
+
+Known ground-truth inconsistencies in this one filing, all filing-prep
+artifacts rather than derivable rules (each verified, each handled by
+running the affected scope with its own MappingProfile in the tests):
+the DG duplicate toggle was ON for the main AEW/AMW scopes but OFF for
+the Japan ones, and the RFA child-date window differs three ways (AEW
+2026-08-30, AMW 2026-08-19, Japan-AEW using the plain validity window and
+Japan-AMW 2026-08-30) even though both are single filing-wide settings.
 """
 from __future__ import annotations
 
@@ -84,6 +122,15 @@ from mrg2opus.schema.opus_rows import ArbsRow, CmdtNoteRow, OpusRowSet, RatesRow
 
 SHEET_AEW = "AEW"
 SHEET_AMW = "AMW"
+# The Japan-origin scope arrives as its own separate raw file with its own
+# sheet names - same 22-column DATA shape, just scoped to JP* origins with
+# its own validity window and (shorter) charge-code list.
+SHEET_JP_AEW = "EX.JP AEW"
+SHEET_JP_AMW = "EX.JP AMW"
+# run_multi() scope keys for the Japan sub-lanes (the main two use their own
+# raw sheet names, "AEW"/"AMW", as keys).
+SCOPE_JP_AEW = "JAPAN AEW"
+SCOPE_JP_AMW = "JAPAN AMW"
 
 DATA_MIN_ROW = 2
 COL_EFF_DATE, COL_EXP_DATE, COL_SCOPE, COL_CMDT_NAME = 1, 2, 3, 4
@@ -103,9 +150,17 @@ CARGO_TYPE_MAP: dict[str, tuple[str, str]] = {
 DEFAULT_COMMODITY_DESCRIPTION = "FAK"
 DEFAULT_COMMODITY_CODE = "G0001"
 
+# The Japan scope files under its own commodity group - same description
+# for both sub-scopes but a DIFFERENT default code each (confirmed against
+# JAPAN POLLY.xlsx: AEW's rows carry G0011, AMW's carry G0001). Both stay
+# user-overridable the usual way, keyed by this shared default description.
+DEFAULT_JP_DESCRIPTION = "FAK - JAPAN"
+DEFAULT_JP_CODE_BY_SCOPE: dict[str, str] = {SCOPE_JP_AEW: "G0011", SCOPE_JP_AMW: "G0001"}
+
 _HEA_OVERRIDE = "HEAVY SURCHARGE"
 
 SHEET_ARBS = "Origin ARBS"
+SHEET_ARBS_JP = "Origin ARBS - EX JAPAN"
 ARBS_COL_SCOPE = 1
 ARBS_COL_POINT, ARBS_COL_DESC, ARBS_COL_TRANSMODE, ARBS_COL_TERM = 3, 4, 5, 6
 ARBS_COL_OVER, ARBS_COL_VIA, ARBS_COL_CARGO_TYPE, ARBS_COL_CUR = 7, 8, 9, 10
@@ -118,12 +173,23 @@ _ARBS_PREFIX_BY_CARGO_TYPE: dict[str, str] = {
     "Reefer": "R",
     "Reefer Dry": "R",
 }
-# CGO Type is blank for every ARBS row EXCEPT "Reefer Dry" ones, which get
-# "DR" - confirmed against ground truth (every other combination, D2/D4/
-# D5/R2, is uniformly blank; only R5 rows sourced from a "Reefer Dry" raw
-# row - which only ever populates the HC/40hc rate column, never 20/40 -
-# get "DR" here, coincidentally matching the raw cargo type's own name).
-_ARBS_CGO_TYPE_BY_CARGO_TYPE: dict[str, str | None] = {"Reefer Dry": "DR"}
+# CGO Type: the two ARBS sheets in this SAME filing use genuinely
+# DIFFERENT, irreconcilable conventions - verified row-by-row by joining
+# each ground-truth ARBS row back to its own raw row:
+#
+#   main "Origin ARBS": Dry General -> blank, Reefer -> blank,
+#                       Reefer Dry -> "DR"
+#   "Origin ARBS - EX JAPAN": Dry General -> "DR", Dry Dangerous -> "DG",
+#                       Reefer -> blank
+#
+# "Dry General" maps to blank in one and "DR" in the other, so no single
+# rule covers both - the Japan sheet stamps each dry row's own OPUS cargo
+# type (matching CARGO_TYPE_MAP) while the main sheet leaves dry rows
+# blank. Kept as two explicit per-sheet tables rather than guessing which
+# is "correct"; extend only against real ground truth, same rule as every
+# other hardcoded lookup in this project.
+_ARBS_CGO_TYPE_MAIN: dict[str, str | None] = {"Reefer Dry": "DR"}
+_ARBS_CGO_TYPE_JP: dict[str, str | None] = {"Dry General": "DR", "Dry Dangerous": "DG"}
 # (Per(*) size suffix, RawArbsRow attribute) - order matters: this is the
 # OUTER loop order confirmed against ground truth's own ARBS row layout
 # (all 20' rows first, then all 40', then all 40HC, then any 45').
@@ -223,6 +289,16 @@ class ScopeData:
     scope: str
     rows: list[RawRow] = field(default_factory=list)
     arbs_rows: list[ArbsRawRow] = field(default_factory=list)
+    # Which commodity group and ARBS CGO-Type convention this scope files
+    # under - the two main scopes share one identity, the two Japan ones
+    # have their own (see DEFAULT_JP_* and _ARBS_CGO_TYPE_JP).
+    commodity_description: str = DEFAULT_COMMODITY_DESCRIPTION
+    commodity_code: str = DEFAULT_COMMODITY_CODE
+    arbs_cgo_type_map: dict[str, str | None] = field(default_factory=lambda: _ARBS_CGO_TYPE_MAIN)
+    # AEW/AMW-only: the D7 (OFT 45) add-on never applies to the Japan
+    # scope - its own ground truth has no rate_45 anywhere, and the raw
+    # "Surcharges" reference sheet scopes the add-on to AEW/AMW only.
+    supports_d7: bool = True
 
 
 def _read_sheet(ws: Worksheet, scope: str) -> ScopeData:
@@ -305,7 +381,11 @@ def _read_arbs_sheet(ws: Worksheet, scope: str) -> list[ArbsRawRow]:
                 # confirmed against ground truth's own expanded "Door".
                 term=_expand_arbs_term(ws.cell(row=row_idx, column=ARBS_COL_TERM).value),
                 over=str(ws.cell(row=row_idx, column=ARBS_COL_OVER).value or "").strip() or None,
-                via=str(ws.cell(row=row_idx, column=ARBS_COL_VIA).value or "").strip() or None,
+                # Same literal passthrough as trans_mode above (NOT
+                # "or None"): the main sheet's blank Via cells are a true
+                # blank, the Japan sheet's are an empty string, and ground
+                # truth preserves whichever one the raw cell actually is.
+                via=_raw_str_or_none(ws.cell(row=row_idx, column=ARBS_COL_VIA).value),
                 cargo_type=str(ws.cell(row=row_idx, column=ARBS_COL_CARGO_TYPE).value or "").strip(),
                 cur=str(ws.cell(row=row_idx, column=ARBS_COL_CUR).value or "").strip() or None,
                 rate_20=_parse_decimal(ws.cell(row=row_idx, column=ARBS_COL_20).value),
@@ -317,7 +397,12 @@ def _read_arbs_sheet(ws: Worksheet, scope: str) -> list[ArbsRawRow]:
     return rows
 
 
-def _build_arbs_rows(raw_rows: list[ArbsRawRow], validity_start: date | None, validity_end: date | None) -> list[ArbsRow]:
+def _build_arbs_rows(
+    raw_rows: list[ArbsRawRow],
+    validity_start: date | None,
+    validity_end: date | None,
+    cgo_type_by_cargo_type: dict[str, str | None],
+) -> list[ArbsRow]:
     out: list[ArbsRow] = []
     for suffix, attr in _ARBS_SIZE_SLOTS:
         for rr in raw_rows:
@@ -341,7 +426,7 @@ def _build_arbs_rows(raw_rows: list[ArbsRawRow], validity_start: date | None, va
                     over=rr.over,
                     via=rr.via,
                     per=f"{prefix}{suffix}",
-                    cgo_type=_ARBS_CGO_TYPE_BY_CARGO_TYPE.get(rr.cargo_type),
+                    cgo_type=cgo_type_by_cargo_type.get(rr.cargo_type),
                     cur=rr.cur,
                     proposal=value,
                     eff_date=validity_start,
@@ -354,9 +439,20 @@ def _build_arbs_rows(raw_rows: list[ArbsRawRow], validity_start: date | None, va
 class TADAewAmwParser(BaseMRGParser):
     lane_id: ClassVar[str] = "TAD-AEW-AMW"
     SHEET_NAME_OVERRIDES: ClassVar[dict[str, str]] = {"route_notes": "ROUTE NOTE"}
+    # The Japan scopes' own sheet names come from JAPAN POLLY.xlsx. Its
+    # ROUTE sheet is a single combined one carrying a Service Scope column,
+    # which this writer can't express - but only the AMW Japan scope ever
+    # produces route notes (AEW Japan's raw rows have no T/S Port, Service
+    # Lane, or special-node tag at all), so mapping just that one to
+    # "ROUTE" reproduces the real sheet without a name collision.
     SCOPED_SHEET_NAME_OVERRIDES: ClassVar[dict[str, dict[str, str]]] = {
         "AEW": {"cmdt_notes": "SRCHG", "arbs": "AEW ARBS"},
         "AMW": {"arbs": "ORIGIN ARBS"},
+        SCOPE_JP_AEW: {"rates": "AEW RATES", "cmdt_notes": "AEW SRCHG", "arbs": "ORIGIN ARBS AEW"},
+        SCOPE_JP_AMW: {
+            "rates": "AMW RATES", "cmdt_notes": "AMW SRCHG",
+            "route_notes": "ROUTE", "arbs": "ORIGIN ARBS AMW",
+        },
     }
 
     @classmethod
@@ -376,18 +472,34 @@ class TADAewAmwParser(BaseMRGParser):
         # Origin ARBS is byte-identical across snapshot occurrences (no
         # rate correction there) - only the first is parsed, not merged.
         arbs_sheet_names = find_snapshot_sheets(wb, SHEET_ARBS)
-        for scope_name in (SHEET_AEW, SHEET_AMW):
-            sheet_names = find_snapshot_sheets(wb, scope_name)
+        arbs_jp_sheet_names = find_snapshot_sheets(wb, SHEET_ARBS_JP)
+
+        # (scope key, raw sheet name, raw ARBS sheet occurrences, the raw
+        # ARBS sheet's own Service Scope value, per-scope identity)
+        plan = [
+            (SHEET_AEW, SHEET_AEW, arbs_sheet_names, SHEET_AEW, None),
+            (SHEET_AMW, SHEET_AMW, arbs_sheet_names, SHEET_AMW, None),
+            (SCOPE_JP_AEW, SHEET_JP_AEW, arbs_jp_sheet_names, SHEET_AEW, SCOPE_JP_AEW),
+            (SCOPE_JP_AMW, SHEET_JP_AMW, arbs_jp_sheet_names, SHEET_AMW, SCOPE_JP_AMW),
+        ]
+        for scope_key, raw_sheet, arbs_names, arbs_scope_value, jp_scope in plan:
+            sheet_names = find_snapshot_sheets(wb, raw_sheet)
             if not sheet_names:
                 continue
-            occurrences = [_read_sheet(wb[name], scope_name).rows for name in sheet_names]
-            arbs_rows = _read_arbs_sheet(wb[arbs_sheet_names[0]], scope_name) if arbs_sheet_names else []
-            scopes[scope_name] = ScopeData(scope=scope_name, rows=merge_dated_snapshots(occurrences), arbs_rows=arbs_rows)
+            occurrences = [_read_sheet(wb[name], scope_key).rows for name in sheet_names]
+            arbs_rows = _read_arbs_sheet(wb[arbs_names[0]], arbs_scope_value) if arbs_names else []
+            data = ScopeData(scope=scope_key, rows=merge_dated_snapshots(occurrences), arbs_rows=arbs_rows)
+            if jp_scope is not None:
+                data.commodity_description = DEFAULT_JP_DESCRIPTION
+                data.commodity_code = DEFAULT_JP_CODE_BY_SCOPE[jp_scope]
+                data.arbs_cgo_type_map = _ARBS_CGO_TYPE_JP
+                data.supports_d7 = False
+            scopes[scope_key] = data
         return RawExtraction(tables={"scopes": scopes})
 
     def _build_one_scope(self, data: ScopeData, config: MappingProfile) -> OpusRowSet:
-        description = resolve_commodity_description(DEFAULT_COMMODITY_DESCRIPTION, config)
-        code = resolve_commodity_code(DEFAULT_COMMODITY_DESCRIPTION, DEFAULT_COMMODITY_CODE, config)
+        description = resolve_commodity_description(data.commodity_description, config)
+        code = resolve_commodity_code(data.commodity_description, data.commodity_code, config)
         excluded_codes = frozenset(config.excluded_charge_codes)
 
         # CMDT NOTE grouping is data-driven (per-row validity dates +
@@ -440,7 +552,7 @@ class TADAewAmwParser(BaseMRGParser):
             )
 
         # D7 (OFT 45): opt-in only, D/DR rows only - see module docstring.
-        if config.include_tad_d7:
+        if config.include_tad_d7 and data.supports_d7:
             for r in rates:
                 if r.prefix == "D" and r.cgo_type == "DR" and r.rate_40hc is not None:
                     r.cur_45 = "USD"
@@ -499,7 +611,7 @@ class TADAewAmwParser(BaseMRGParser):
         # the earliest snapshot's start through the latest's end.
         arbs_validity_start = min((k[0] for k in group_order if k[0] is not None), default=None)
         arbs_validity_end = max((k[1] for k in group_order if k[1] is not None), default=None)
-        arbs = _build_arbs_rows(data.arbs_rows, arbs_validity_start, arbs_validity_end)
+        arbs = _build_arbs_rows(data.arbs_rows, arbs_validity_start, arbs_validity_end, data.arbs_cgo_type_map)
 
         return OpusRowSet(rates=rates, cmdt_notes=cmdt_notes, route_notes=route_notes, arbs=arbs)
 
