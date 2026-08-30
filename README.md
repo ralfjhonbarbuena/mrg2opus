@@ -5,34 +5,43 @@ structured OPUS filing format. See `mrg2opus/schema/`, `mrg2opus/parsers/`,
 and `mrg2opus/location_bank/` for the core pieces; the full design is in
 the plan this was built from.
 
-## Setup
+## Setup on a new machine
 
-Python 3.14 is at `C:\Users\romsae-desktop\AppData\Local\Python\bin\python.exe`
-(the WindowsApps `python`/`py` commands are unreliable store shims - don't
-use them). A `.venv` already exists in this folder with all dependencies
-installed; to recreate it from scratch:
-
-```bash
-"C:\Users\romsae-desktop\AppData\Local\Python\bin\python.exe" -m venv .venv
-./.venv/Scripts/python.exe -m pip install -r requirements.txt
-```
-
-## One-time reference data bootstrap
-
-Mines the Location Bank from the 5 ground-truth sample workbooks in
-`Sample MRGs with OPUS FORMATS/`. Run once (or after adding new paired
-samples):
+Needs **Python 3.11 or newer** (built and tested on 3.14). On Windows,
+install from python.org rather than the Microsoft Store - the Store's
+`python`/`py` commands are shims that misbehave inside virtualenvs.
 
 ```bash
-./.venv/Scripts/python.exe -m mrg2opus.location_bank.bootstrap_from_samples
+git clone https://github.com/ralfjhonbarbuena/mrg2opus.git
+cd mrg2opus
+python -m venv .venv
+./.venv/Scripts/python.exe -m pip install -r requirements.txt   # Windows
+# ./.venv/bin/python -m pip install -r requirements.txt         # macOS/Linux
 ```
 
-This creates `data/location_bank.sqlite3`. To add full UN/LOCODE coverage
-(recommended - closes fuzzy-match gaps for locations that never appear
-standalone in the 5 samples), download the UN/LOCODE CSV from UNECE
-(https://unece.org/trade/cefact/UNLOCODE-Download) into
-`reference/unlocode/`, then run `bootstrap_unlocode.py` (Phase 2/3 work -
-not yet implemented).
+That is the whole install. Nothing else has to be generated or downloaded:
+the Location Bank (`data/location_bank.sqlite3`) is committed, and so are
+the reference filings the tests compare against, so the suite runs on a
+fresh clone:
+
+```bash
+./.venv/Scripts/python.exe -m pytest -q     # ~5 min, exercises every lane
+```
+
+Substitute `.venv/bin/python` for `.venv/Scripts/python.exe` on macOS and
+Linux throughout this file. The clone is ~35 MB, nearly all of it the
+`reference/` filings; `--depth 1` skips the history if that matters.
+
+### Regenerating the Location Bank
+
+Not part of setup - the database is committed and shipping it is the
+supported path. `mrg2opus.location_bank.bootstrap_from_samples` still
+exists but **cannot be run as written**: it mines a
+`Sample MRGs with OPUS FORMATS/` folder that has since been deleted in
+favour of `reference/1_MRGs` + `reference/2_OPUS` (see the
+feedback-reference-folder-convention note). It would need repointing at
+those before it works again. Ports are otherwise added one at a time as
+real filings turn up (`LocationBankStore.upsert_location`).
 
 There is no equivalent bank/registry for commodity group codes - each
 parser ships a hardcoded default code+description per commodity group
@@ -186,12 +195,19 @@ only controls what gets compared. See
 **CLI (Phase 1, still available for scripting):**
 
 ```bash
-./.venv/Scripts/python.exe -m mrg2opus.cli parse "Sample MRGs with OPUS FORMATS/SAF.xlsx" --out out.xlsx
+./.venv/Scripts/python.exe -m mrg2opus.cli parse "reference/1_MRGs/9_West Africa WAF/Asia WAF MRG rate (26 Aug 2026 - 01 Sep 2026) (18 Aug updated.) (1).xlsx" --out out.xlsx
 ```
 
-SAF, EAF (both sub-lanes: TZDAR, KEMBA), CSE, LAEC, and LAWC are all
-implemented end-to-end (see `mrg2opus/parsers/saf.py`, `eaf.py`, `cse.py`,
-`laec.py`, `lawc.py`).
+Pass several files to merge one multi-file filing. It classifies the lane
+itself and prints the row count per output sheet. `--no-vertical-rates`
+leaves out the VERTICAL RATES sheet (on by default, like the app's own
+Step 3 toggle).
+
+**17 lanes are implemented** - SAF, EAF (TZDAR/KEMBA), CSE, LAEC,
+LAEC-LUX, LAWC, WAF, WEST-ASIA-WAF, WEST-ASIA-MULTI, AUEC, AUWC, AUBP,
+NZ1-SEA, NZJ, and the three TAD FILING trades (OEW/OMW, WMW/WEW,
+AEW/AMW). All but SAF and WEST-ASIA-MULTI are verified row-by-row against
+a real OPUS filing; those two have no filing to compare against yet.
 
 CSE is by far the richest lane: 3 D2/D4/D5 rate grids across separate raw
 sheets and commodity groups (main Caribbean/Central America service,
