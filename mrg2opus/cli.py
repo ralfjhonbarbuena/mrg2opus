@@ -34,7 +34,8 @@ def parse_command(args: argparse.Namespace) -> None:
     print(f"Classified as lane={result.profile.lane_id} confidence={result.confidence:.2f} breakdown={result.breakdown}")
 
     parser_cls = result.profile.parser_cls
-    row_sets = run_parser(parser_cls(), wb, MappingProfile())
+    profile = MappingProfile(include_vertical_rates=args.vertical_rates)
+    row_sets = run_parser(parser_cls(), wb, profile)
 
     write_opus_workbook_multi(
         row_sets,
@@ -66,7 +67,16 @@ def main() -> None:
     parse_ap = sub.add_parser("parse", help="Convert one or more raw MRG Excel files to OPUS format")
     parse_ap.add_argument("input", type=Path, nargs="+", help="One or more raw MRG .xlsx files to merge and parse")
     parse_ap.add_argument("--out", type=Path, required=True)
-    parse_ap.set_defaults(func=parse_command)
+    parse_ap.add_argument(
+        "--no-vertical-rates",
+        dest="vertical_rates",
+        action="store_false",
+        help=(
+            "Leave out the VERTICAL RATES sheets. They are generated for every lane by default, one sheet "
+            "per CMDT Seq (the same toggle as Step 3's 'Include Vertical Rates' in the app)."
+        ),
+    )
+    parse_ap.set_defaults(func=parse_command, vertical_rates=True)
 
     args = ap.parse_args()
     args.func(args)
