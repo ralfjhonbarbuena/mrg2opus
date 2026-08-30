@@ -30,6 +30,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from mrg2opus.parsers.base import BaseMRGParser, RawExtraction
 from mrg2opus.parsers.common.commodity import resolve_commodity_code, resolve_commodity_description
 from mrg2opus.parsers.common.exclusion import is_excluded
+from mrg2opus.parsers.common.tad_snapshots import find_snapshot_sheets, merge_dated_snapshots
 from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema.charge_codes import CHARGE_CODE_NAMES
@@ -211,10 +212,12 @@ class TADOewOmwParser(BaseMRGParser):
 
     def parse_raw(self, wb: Workbook) -> RawExtraction:
         scopes: dict[str, ScopeData] = {}
-        if SHEET_OEW in wb.sheetnames:
-            scopes[SHEET_OEW] = _read_sheet(wb[SHEET_OEW], SHEET_OEW)
-        if SHEET_OMW in wb.sheetnames:
-            scopes[SHEET_OMW] = _read_sheet(wb[SHEET_OMW], SHEET_OMW)
+        for scope_name in (SHEET_OEW, SHEET_OMW):
+            sheet_names = find_snapshot_sheets(wb, scope_name)
+            if not sheet_names:
+                continue
+            occurrences = [_read_sheet(wb[name], scope_name).rows for name in sheet_names]
+            scopes[scope_name] = ScopeData(scope=scope_name, rows=merge_dated_snapshots(occurrences))
         return RawExtraction(tables={"scopes": scopes})
 
     def _build_one_scope(self, data: ScopeData, config: MappingProfile) -> OpusRowSet:
@@ -268,6 +271,17 @@ class TADOewOmwParser(BaseMRGParser):
                     rate_45=row.rate_45,
                     route_note=_route_note_for(row.commodity_name, row.ts_port),
                 )
+            )
+
+        # Opt-in only (config.generate_tad_dg_duplicate, default off) -
+        # mirrors the team's own VBA tool's "Include Dry Dangerous" toggle
+        # (see project_tad_vba_tool_analysis memory). A duplicate shares
+        # its parent's cmdt_seq (same validity/charge-code key - only
+        # cgo_type changes), so it needs no separate group bookkeeping;
+        # inserted before Route Seq. numbering below so it's included.
+        if config.generate_tad_dg_duplicate:
+            rates.extend(
+                row.model_copy(update={"cgo_type": "DG"}) for row in list(rates) if row.prefix == "D" and row.cgo_type == "DR"
             )
 
         # Route Seq.: one continuous counter per commodity group (same

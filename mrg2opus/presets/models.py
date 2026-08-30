@@ -5,6 +5,7 @@ need re-configuring every run.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -86,3 +87,24 @@ class MappingProfile(BaseModel):
     # schema/opus_rows.py::build_vertical_rates(), applied in
     # ui/parsing.py::run_parser().
     include_vertical_rates: bool = False
+    # TAD FILING lanes only (OEW/OMW, WMW/WEW, AEW/AMW): mirrors the team's
+    # own "Tool for TAD.xlsm" VBA export's "Include Dry Dangerous" toggle -
+    # duplicates every D/DR row as an identical D/DG row at the same rate.
+    # Unlike skip_dg_generation above (which SKIPS an otherwise-default-on
+    # duplicate), TAD's own confirmed convention is DG duplication OFF by
+    # default - this is an opt-IN, not an opt-out, and applies uniformly
+    # across every TAD lane in one run (no per-group key: TAD's raw sheets
+    # don't have the same "default_description per group" structure the
+    # other lanes key skip_dg_generation by).
+    generate_tad_dg_duplicate: bool = False
+    # AEW/AMW only: an OFT 45 ("D7") rate slot the raw MRG never carries
+    # directly - confirmed against ground truth as OFT 40HC + a fixed
+    # add-on (reference/1_MRGs/23_TAD FILING AEW AMW's own "Surcharges"
+    # sheet, rows 48-49: "$700 add-on for D7"). Off by default (matching
+    # the VBA tool's own "Include D7 (OFT 45)" toggle default) and only
+    # ever applied to D/DR rows - a generated D/DG duplicate (see
+    # generate_tad_dg_duplicate above) copies the same D7 rate across
+    # rather than recomputing it. OEW/OMW and WMW/WEW never generate this;
+    # the raw MRG shape doesn't carry an equivalent add-on for them.
+    include_tad_d7: bool = False
+    tad_d7_addon: Decimal = Decimal("700")

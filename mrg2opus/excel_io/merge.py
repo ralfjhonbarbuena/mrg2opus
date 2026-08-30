@@ -25,6 +25,18 @@ content alone can't safely tell "this is the known VE-file pattern"
 apart from "someone accidentally uploaded a genuine duplicate", so an
 unrelated same-named collision still raises DuplicateSheetError exactly
 as before.
+
+TAD FILING lanes have a different, NOT filename-gated multi-file case:
+the team can issue a rate correction mid-period as a whole second raw
+file with the SAME sheet names ("AEW"/"AMW"/etc.) - confirmed against
+reference/1_MRGs/23_TAD FILING AEW AMW's own 2 raw files (see
+parsers/common/tad_snapshots.py for how the parser side merges them).
+Unlike CSE's Venezuela case, any collision on one of TAD's own known raw
+sheet names IS the legitimate multi-snapshot pattern - there's no
+"accidental duplicate" scenario to guard against the way there is for a
+generic name like "CSE", so this doesn't need a filename marker: a
+collision on _TAD_SNAPSHOT_SHEETS auto-renames "{name} (2)", "{name} (3)",
+etc. instead of raising.
 """
 from __future__ import annotations
 
@@ -44,6 +56,14 @@ _CSE_VENEZUELA_SHEET = "CSE VE"
 # have been seen with inconsistent trailing whitespace in sheet names
 # (e.g. "Free Time ").
 _CSE_DEDUPE_SAFE_SHEETS = {"DG surcharges", "Yangtze ARB Add-on", "Free Time"}
+
+# See the module docstring's TAD paragraph. Base names only - a renamed
+# occurrence ("AEW (2)") is generated here, never uploaded directly.
+_TAD_SNAPSHOT_SHEETS = {
+    "OEW", "OMW", "WEW", "WMW", "AEW", "AMW",
+    "EX.JP AEW", "EX.JP AMW",
+    "Origin ARBS", "Origin ARBS - EX JAPAN",
+}
 
 
 class DuplicateSheetError(Exception):
@@ -74,6 +94,7 @@ def merge_workbooks(workbooks: list[Workbook], names: list[str | None] | None = 
     merged = openpyxl.Workbook()
     merged.remove(merged.active)
     seen: set[str] = set()
+    tad_occurrence_count: dict[str, int] = {}
     for wb, name in zip(workbooks, names):
         is_venezuela_supplement = _is_cse_venezuela_supplement(name)
         for sheet_name in wb.sheetnames:
@@ -83,6 +104,9 @@ def merge_workbooks(workbooks: list[Workbook], names: list[str | None] | None = 
                     target_name = _CSE_VENEZUELA_SHEET
                 elif is_venezuela_supplement and sheet_name.strip() in _CSE_DEDUPE_SAFE_SHEETS:
                     continue  # keep the main file's copy, drop this duplicate
+                elif sheet_name in _TAD_SNAPSHOT_SHEETS:
+                    tad_occurrence_count[sheet_name] = tad_occurrence_count.get(sheet_name, 1) + 1
+                    target_name = f"{sheet_name} ({tad_occurrence_count[sheet_name]})"
                 else:
                     raise DuplicateSheetError(
                         f"Sheet {sheet_name!r} appears in more than one uploaded file - "

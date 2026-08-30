@@ -39,10 +39,14 @@ def _apply_skips(row_sets: dict[str, OpusRowSet], skip_output_sheets: dict[str, 
 
 def _build_workbook_bytes(state: WizardState) -> bytes:
     row_sets = _apply_skips(state.row_sets, state.profile.skip_output_sheets)
-    overrides = get_profile(state.selected_lane_id).parser_cls.SHEET_NAME_OVERRIDES if state.selected_lane_id else None
+    parser_cls = get_profile(state.selected_lane_id).parser_cls if state.selected_lane_id else None
+    overrides = parser_cls.SHEET_NAME_OVERRIDES if parser_cls else None
+    scoped_overrides = parser_cls.SCOPED_SHEET_NAME_OVERRIDES if parser_cls else None
     with tempfile.TemporaryDirectory() as tmp_dir:
         out_path = Path(tmp_dir) / "opus_output.xlsx"
-        write_opus_workbook_multi(row_sets, out_path, sheet_name_overrides=overrides)
+        write_opus_workbook_multi(
+            row_sets, out_path, sheet_name_overrides=overrides, scoped_sheet_name_overrides=scoped_overrides
+        )
         return out_path.read_bytes()
 
 

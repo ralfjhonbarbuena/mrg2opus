@@ -119,3 +119,40 @@ def test_venezuela_marker_matches_case_insensitively():
     merged = merge_workbooks([wb1, wb2], ["main.xlsx", "for vepbl.xlsx"])
 
     assert "CSE VE" in merged.sheetnames
+
+
+def test_tad_snapshot_sheet_collision_renames_instead_of_raising():
+    """Real-world case (reference/1_MRGs/23_TAD FILING AEW AMW/): the team
+    can issue a rate correction mid-period as a second raw file with the
+    SAME sheet names - not an accidental duplicate upload, no filename
+    marker needed (unlike CSE's Venezuela case) since any collision on a
+    known TAD sheet name IS the legitimate multi-snapshot pattern."""
+    wb1 = _wb_with_sheet("AEW", {(1, 1): "week1"})
+    wb2 = _wb_with_sheet("AEW", {(1, 1): "week2"})
+
+    merged = merge_workbooks([wb1, wb2])
+
+    assert set(merged.sheetnames) == {"AEW", "AEW (2)"}
+    assert merged["AEW"].cell(row=1, column=1).value == "week1"
+    assert merged["AEW (2)"].cell(row=1, column=1).value == "week2"
+
+
+def test_tad_snapshot_sheet_collision_numbers_a_third_occurrence():
+    wb1 = _wb_with_sheet("OEW", {(1, 1): "a"})
+    wb2 = _wb_with_sheet("OEW", {(1, 1): "b"})
+    wb3 = _wb_with_sheet("OEW", {(1, 1): "c"})
+
+    merged = merge_workbooks([wb1, wb2, wb3])
+
+    assert set(merged.sheetnames) == {"OEW", "OEW (2)", "OEW (3)"}
+    assert merged["OEW (3)"].cell(row=1, column=1).value == "c"
+
+
+def test_non_tad_sheet_name_collision_still_raises():
+    """A collision on a name outside the known TAD sheet set is treated
+    exactly as before - no blanket "just rename everything" behavior."""
+    wb1 = _wb_with_sheet("Random Sheet", {(1, 1): "a"})
+    wb2 = _wb_with_sheet("Random Sheet", {(1, 1): "b"})
+
+    with pytest.raises(DuplicateSheetError):
+        merge_workbooks([wb1, wb2])

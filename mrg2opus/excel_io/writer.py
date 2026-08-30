@@ -149,6 +149,7 @@ def write_opus_workbook_multi(
     row_sets: dict[str, OpusRowSet],
     out_path: Path | str,
     sheet_name_overrides: dict[str, str] | None = None,
+    scoped_sheet_name_overrides: dict[str, dict[str, str]] | None = None,
 ) -> None:
     """Write several sub-lane OpusRowSets into ONE workbook, each under its
     own suffixed sheet names (e.g. {"TZDAR": ..., "KEMBA": ...} ->
@@ -158,7 +159,11 @@ def write_opus_workbook_multi(
     sheet_name_overrides lets a lane replace one or more base sheet names
     (keyed by OpusRowSet field name, e.g. {"route_notes": "ROUTE NOTE"})
     when its own real filing convention differs from the default - see
-    BaseMRGParser.SHEET_NAME_OVERRIDES."""
+    BaseMRGParser.SHEET_NAME_OVERRIDES. scoped_sheet_name_overrides is for
+    the rarer case where even that uniform tagging is wrong for one scope -
+    {scope: {field: full_name}}, applied verbatim (no tag appended) for
+    whichever fields that scope lists, layered OVER sheet_name_overrides -
+    see BaseMRGParser.SCOPED_SHEET_NAME_OVERRIDES."""
     wb = Workbook()
     wb.remove(wb.active)
     for suffix, row_set in row_sets.items():
@@ -166,6 +171,8 @@ def write_opus_workbook_multi(
         if sheet_name_overrides:
             tag = f"-{suffix}" if suffix else ""
             names.update({key: f"{base}{tag}" for key, base in sheet_name_overrides.items()})
+        if scoped_sheet_name_overrides and suffix in scoped_sheet_name_overrides:
+            names.update(scoped_sheet_name_overrides[suffix])
         _write_row_set(wb, row_set, names)
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
