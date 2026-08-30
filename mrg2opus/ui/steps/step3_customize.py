@@ -72,8 +72,8 @@ def render(state: WizardState) -> None:
         "to reorder rows, but the **Order** column does the same job: give groups numbers to set the sequence "
         "they'll appear in on the generated OPUS RATES / RATES PORT-PORT / CMDT NOTE sheets - lower numbers "
         "come first. Two (or more) groups given the exact same Description merge into one CMDT NOTE block. "
-        "**Skip DG** stops that group's base Dry rows from also filing an identical D/DG duplicate - check it "
-        "for a group that shouldn't carry a Dangerous Goods rate at all."
+        "**Skip DG** stops just that group's base Dry rows from also filing an identical D/DG duplicate - to "
+        "turn Dangerous Goods off for the whole filing instead, use the Dangerous Goods checkbox below."
     )
     if groups:
         existing_order = state.profile.commodity_group_order
@@ -158,27 +158,45 @@ def render(state: WizardState) -> None:
         ),
     )
 
-    # TAD FILING lanes only - both mirror the team's own "Tool for TAD.xlsm"
-    # SETTINGS toggles, and both are off by default there (unlike every
-    # other lane's DG duplication, which is on by default and opted OUT of
-    # per commodity group in the table above).
+    # One DG control for EVERY lane. The underlying field and the default
+    # differ by lane family - TAD mirrors its own export tool's opt-IN
+    # "Include Dry Dangerous" setting (off by default), every other lane
+    # generates the duplicate by default and opts OUT - but the user sees
+    # the same checkbox either way, and non-TAD lanes keep the per-group
+    # "Skip DG" column above for finer control.
+    st.markdown("#### Dangerous Goods (DG)")
     is_tad_lane = bool(state.selected_lane_id and state.selected_lane_id.startswith("TAD-"))
-    generate_tad_dg_duplicate = state.profile.generate_tad_dg_duplicate
+    group_descriptions = [desc for _code, desc in groups]
+    if is_tad_lane:
+        dg_currently_on = state.profile.generate_tad_dg_duplicate
+    else:
+        # On unless every group is currently skipped.
+        dg_currently_on = not (
+            bool(group_descriptions)
+            and all(state.profile.skip_dg_generation.get(d, False) for d in group_descriptions)
+        )
+    generate_dg = st.checkbox(
+        "File D/DG duplicate rows",
+        value=dg_currently_on,
+        help=(
+            "Files a second, identical row for each base Dry (D/DR) row with CGO TYPE flipped to DG, at the "
+            "same rate - a standing filing convention, not something the raw MRG states. "
+            + (
+                "Off by default for TAD filings, matching the team's own export tool."
+                if is_tad_lane
+                else "On by default for this lane. Unchecking it drops DG everywhere; to drop it for only "
+                "some commodity groups, leave this checked and use the Skip DG column above."
+            )
+        ),
+    )
+
+    generate_tad_dg_duplicate = generate_dg if is_tad_lane else state.profile.generate_tad_dg_duplicate
     include_tad_d7 = state.profile.include_tad_d7
     tad_d7_addon = state.profile.tad_d7_addon
     if is_tad_lane:
-        st.markdown("#### TAD filing options")
-        generate_tad_dg_duplicate = st.checkbox(
-            "Include Dry Dangerous (duplicate every D/DR row as D/DG)",
-            value=generate_tad_dg_duplicate,
-            help=(
-                "Files a second, identical row per Dry General row with CGO TYPE flipped to DG, at the same "
-                "rate. Off by default for TAD (matching the team's own export tool), unlike other lanes where "
-                "the duplicate is generated unless you skip it per commodity group above."
-            ),
-        )
         is_aew_amw = state.selected_lane_id == "TAD-AEW-AMW"
         if is_aew_amw:
+            st.markdown("#### TAD AEW/AMW filing options")
             col_d7, col_d7_amt = st.columns(2)
             with col_d7:
                 include_tad_d7 = st.checkbox(
@@ -240,9 +258,15 @@ def render(state: WizardState) -> None:
                 if r.get("override_cmdt_seq") not in (None, "")
             }
             skip_output_sheets = {name: skip for name, skip in skip_choices.items() if skip}
-            skip_dg_generation = {
-                r["default_description"]: True for r in edited if r.get("skip_dg")
-            }
+            # Master DG toggle wins when it's off (skip every group);
+            # when on, the per-group Skip DG column decides. TAD lanes
+            # don't use this dict at all - their toggle is the bool below.
+            if not generate_dg and not is_tad_lane:
+                skip_dg_generation = {r["default_description"]: True for r in edited}
+            else:
+                skip_dg_generation = {
+                    r["default_description"]: True for r in edited if r.get("skip_dg")
+                }
             # The FINAL description (post-override) of each row, sorted by
             # its "Order" value - this is what actually ends up on the
             # output rows, so it's what group_order needs to match against
