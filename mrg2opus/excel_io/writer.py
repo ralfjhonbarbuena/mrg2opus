@@ -106,6 +106,29 @@ def _sheet_names_for_suffix(suffix: str) -> dict[str, str]:
     }
 
 
+def resolve_sheet_names(
+    suffix: str,
+    sheet_name_overrides: dict[str, str] | None = None,
+    scoped_sheet_name_overrides: dict[str, dict[str, str]] | None = None,
+) -> dict[str, str]:
+    """{OpusRowSet field name: the sheet name it will actually be written
+    under} for one scope, applying both override layers.
+
+    Public because the UI needs the SAME answer the writer will act on -
+    the wizard used to keep its own hardcoded list of sheet labels, which
+    drifted: it named only 5 of the 8 sheet types (so ROUTE NOTE, VERTICAL
+    RATES and FREETIME were invisible and unskippable) and prefixed them
+    "OPUS RATES"/"OPUS ARBS", names that appear in no output workbook.
+    """
+    names = _sheet_names_for_suffix(suffix)
+    if sheet_name_overrides:
+        tag = f"-{suffix}" if suffix else ""
+        names.update({key: f"{base}{tag}" for key, base in sheet_name_overrides.items()})
+    if scoped_sheet_name_overrides and suffix in scoped_sheet_name_overrides:
+        names.update(scoped_sheet_name_overrides[suffix])
+    return names
+
+
 def _write_row_set(wb: Workbook, row_set: OpusRowSet, names: dict[str, str]) -> None:
     if row_set.rates:
         _write_rates_sheet(wb, names["rates"], row_set.rates)
@@ -172,12 +195,7 @@ def write_opus_workbook_multi(
     wb = Workbook()
     wb.remove(wb.active)
     for suffix, row_set in row_sets.items():
-        names = _sheet_names_for_suffix(suffix)
-        if sheet_name_overrides:
-            tag = f"-{suffix}" if suffix else ""
-            names.update({key: f"{base}{tag}" for key, base in sheet_name_overrides.items()})
-        if scoped_sheet_name_overrides and suffix in scoped_sheet_name_overrides:
-            names.update(scoped_sheet_name_overrides[suffix])
+        names = resolve_sheet_names(suffix, sheet_name_overrides, scoped_sheet_name_overrides)
         _write_row_set(wb, row_set, names)
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)

@@ -7,33 +7,8 @@ import streamlit as st
 from mrg2opus.parsers.registry import get_profile
 from mrg2opus.presets.store import list_presets, load_preset, save_preset
 from mrg2opus.ui.parsing import run_parser
+from mrg2opus.ui.sheets import output_sheets
 from mrg2opus.ui.state import WizardState
-
-SHEET_LABELS = {
-    "rates": "OPUS RATES",
-    "rates_port_port": "OPUS RATES PORT-PORT",
-    "arbs": "OPUS ARBS",
-    "cmdt_notes": "OPUS CMDT NOTE",
-    "special_notes": "OPUS SPECIAL NOTE",
-}
-
-
-def _output_sheet_names(row_sets: dict) -> list[str]:
-    names: list[str] = []
-    for suffix, row_set in row_sets.items():
-        tag = f"-{suffix}" if suffix else ""
-        if row_set.rates:
-            names.append(f"OPUS RATES{tag}")
-        if row_set.rates_port_port:
-            names.append(f"OPUS RATES{tag} PORT-PORT")
-        if row_set.arbs:
-            names.append(f"OPUS ARBS{tag}")
-        if row_set.cmdt_notes:
-            names.append(f"OPUS CMDT NOTE{tag}")
-        if row_set.special_notes:
-            names.append(f"OPUS SPECIAL NOTE{tag}")
-    return names
-
 
 def render(state: WizardState) -> None:
     st.subheader("Customize")
@@ -152,10 +127,9 @@ def render(state: WizardState) -> None:
         "Include Vertical Rates (alternate OPUS upload format)",
         value=state.profile.include_vertical_rates,
         help=(
-            "The same rates as OPUS RATES, reshaped one row per container size instead of 4 rate columns per "
-            "row - a general OPUS upload option, faster to upload. Generated for every lane by default, as "
-            "one sheet per CMDT Seq so each stays under the 10,000-row upload limit. Uncheck to leave the "
-            "sheets out entirely."
+            "The same rates as the RATES sheet, reshaped one row per container size instead of 4 rate "
+            "columns per row - a general OPUS upload option, faster to upload. Generated for every lane by "
+            "default, as one sheet. Uncheck to leave it out entirely."
         ),
     )
 
@@ -222,14 +196,17 @@ def render(state: WizardState) -> None:
                 )
 
     st.markdown("#### Skip output sheets")
-    sheet_names = _output_sheet_names(state.row_sets)
+    st.caption("Named exactly as they'll appear in the exported workbook. Every sheet the export would contain is listed.")
+    sheets = output_sheets(state.row_sets, get_profile(state.selected_lane_id).parser_cls)
     skip_choices: dict[str, bool] = {}
-    if sheet_names:
-        cols = st.columns(min(3, len(sheet_names)))
-        for i, name in enumerate(sheet_names):
+    if sheets:
+        cols = st.columns(min(3, len(sheets)))
+        for i, sheet in enumerate(sheets):
             with cols[i % len(cols)]:
-                skip_choices[name] = st.checkbox(
-                    name, value=state.profile.skip_output_sheets.get(name, False), key=f"skip_{name}"
+                skip_choices[sheet.name] = st.checkbox(
+                    f"{sheet.name}  ({sheet.rows:,})",
+                    value=state.profile.skip_output_sheets.get(sheet.name, False),
+                    key=f"skip_{sheet.scope}_{sheet.name}",
                 )
     else:
         st.caption("No output sheets to skip.")

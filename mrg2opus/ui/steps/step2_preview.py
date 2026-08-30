@@ -8,17 +8,8 @@ from mrg2opus.presets.models import MappingProfile
 from mrg2opus.ui.commodity_utils import assign_sequential_default_codes, distinct_commodity_groups
 from mrg2opus.ui.errors import show_error
 from mrg2opus.ui.parsing import VERTICAL_RATES_ROW_CAP, run_parser, vertical_rates_over_cap
+from mrg2opus.ui.sheets import output_sheets
 from mrg2opus.ui.state import WizardState
-
-SHEET_KEYS = ["rates", "rates_port_port", "arbs", "cmdt_notes", "special_notes"]
-SHEET_LABELS = {
-    "rates": "OPUS RATES",
-    "rates_port_port": "OPUS RATES PORT-PORT",
-    "arbs": "OPUS ARBS",
-    "cmdt_notes": "OPUS CMDT NOTE",
-    "special_notes": "OPUS SPECIAL NOTE",
-}
-
 
 def _run_parser(state: WizardState, profile: MappingProfile) -> dict:
     parser_cls = get_profile(state.selected_lane_id).parser_cls
@@ -98,13 +89,10 @@ def render(state: WizardState) -> None:
         st.rerun()
 
     st.markdown("#### Row counts")
-    count_rows = []
-    for suffix, row_set in row_sets.items():
-        label = suffix or "(default)"
-        for key in SHEET_KEYS:
-            n = len(getattr(row_set, key))
-            if n:
-                count_rows.append({"sub-lane": label, "sheet": SHEET_LABELS[key], "rows": n})
+    # Names and membership come from the writer itself, so this lists
+    # exactly the sheets the export will contain - see ui/sheets.py.
+    sheets = output_sheets(row_sets, get_profile(state.selected_lane_id).parser_cls)
+    count_rows = [{"sub-lane": s.scope_label, "sheet": s.name, "rows": s.rows} for s in sheets]
     if count_rows:
         st.dataframe(count_rows, hide_index=True, width="stretch")
     else:
@@ -135,10 +123,12 @@ def render(state: WizardState) -> None:
     )
     row_set = row_sets[selected_suffix]
 
-    available_keys = [k for k in SHEET_KEYS if getattr(row_set, k)]
-    if available_keys:
-        selected_key = st.selectbox("Sheet", options=available_keys, format_func=lambda k: SHEET_LABELS[k])
-        rows = getattr(row_set, selected_key)
+    scope_sheets = [s for s in sheets if s.scope == selected_suffix]
+    if scope_sheets:
+        selected = st.selectbox(
+            "Sheet", options=scope_sheets, format_func=lambda s: f"{s.name} ({s.rows:,} rows)"
+        )
+        rows = getattr(row_set, selected.field)
         df = pd.DataFrame([r.model_dump() for r in rows[:500]])
         st.caption(f"Showing {len(df)} of {len(rows)} rows.")
         st.dataframe(df, width="stretch")

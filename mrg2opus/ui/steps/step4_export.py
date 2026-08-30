@@ -8,38 +8,17 @@ import streamlit as st
 
 from mrg2opus.excel_io.writer import write_opus_workbook_multi
 from mrg2opus.parsers.registry import get_profile
-from mrg2opus.schema.opus_rows import OpusRowSet
 from mrg2opus.ui.errors import show_error
+from mrg2opus.ui.sheets import apply_skips as _apply_skips, output_sheets
 from mrg2opus.ui.state import WizardState, reset_state
 
 
-def _apply_skips(row_sets: dict[str, OpusRowSet], skip_output_sheets: dict[str, bool]) -> dict[str, OpusRowSet]:
-    """skip_output_sheets is keyed by the final OPUS sheet name (as shown in
-    Step 3's checkboxes) - translate that back into which OpusRowSet field
-    to blank out per sub-lane before writing."""
-    if not skip_output_sheets:
-        return row_sets
-    filtered: dict[str, OpusRowSet] = {}
-    for suffix, row_set in row_sets.items():
-        tag = f"-{suffix}" if suffix else ""
-        data = row_set.model_dump()
-        if skip_output_sheets.get(f"OPUS RATES{tag}"):
-            data["rates"] = []
-        if skip_output_sheets.get(f"OPUS RATES{tag} PORT-PORT"):
-            data["rates_port_port"] = []
-        if skip_output_sheets.get(f"OPUS ARBS{tag}"):
-            data["arbs"] = []
-        if skip_output_sheets.get(f"OPUS CMDT NOTE{tag}"):
-            data["cmdt_notes"] = []
-        if skip_output_sheets.get(f"OPUS SPECIAL NOTE{tag}"):
-            data["special_notes"] = []
-        filtered[suffix] = OpusRowSet.model_validate(data)
-    return filtered
-
-
 def _build_workbook_bytes(state: WizardState) -> bytes:
-    row_sets = _apply_skips(state.row_sets, state.profile.skip_output_sheets)
     parser_cls = get_profile(state.selected_lane_id).parser_cls if state.selected_lane_id else None
+    # parser_cls matters here: skips are keyed by the REAL sheet name, and
+    # a lane with sheet-name overrides (the TAD trades) resolves different
+    # names - without it the keys wouldn't match and nothing would skip.
+    row_sets = _apply_skips(state.row_sets, state.profile.skip_output_sheets, parser_cls)
     overrides = parser_cls.SHEET_NAME_OVERRIDES if parser_cls else None
     scoped_overrides = parser_cls.SCOPED_SHEET_NAME_OVERRIDES if parser_cls else None
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -60,26 +39,17 @@ def render(state: WizardState) -> None:
             st.rerun()
         return
 
-    st.markdown("#### Final row counts")
-    summary = []
-    for suffix, row_set in state.row_sets.items():
-        label = suffix or "(default)"
-        summary.append(
-            {
-                "sub-lane": label,
-                "RATES": len(row_set.rates),
-                "RATES PORT-PORT": len(row_set.rates_port_port),
-                "ARBS": len(row_set.arbs),
-                "CMDT NOTE": len(row_set.cmdt_notes),
-                "SPECIAL NOTE": len(row_set.special_notes),
-            }
-        )
-    st.dataframe(summary, hide_index=True, width="stretch")
-
-    if state.profile.skip_output_sheets:
-        skipped = [name for name, skip in state.profile.skip_output_sheets.items() if skip]
-        if skipped:
-            st.caption(f"Skipping from export: {', '.join(skipped)}")
+    st.markdown("#### Sheets in this workbook")
+    parser_cls = get_profile(state.selected_lane_id).parser_cls if state.selected_lane_id else None
+    skipped = [n for n, skip in state.profile.skip_output_sheets.items() if skip]
+    kept = _apply_skips(state.row_sets, state.profile.skip_output_sheets, parser_cls)
+    st.dataframe(
+        [{"sub-lane": s.scope_label, "sheet": s.name, "rows": s.rows} for s in output_sheets(kept, parser_cls)],
+        hide_index=True,
+        width="stretch",
+    )
+    if skipped:
+        st.caption(f"Left out at your request: {', '.join(skipped)}")
 
     if state.output_bytes is None:
         with st.spinner("Building output workbook..."):
