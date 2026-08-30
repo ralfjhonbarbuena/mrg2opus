@@ -1,15 +1,35 @@
 """Phase 2 Streamlit wizard entrypoint.
 
-    ./.venv/Scripts/python.exe -m streamlit run mrg2opus/ui/app.py
+    ./.venv/Scripts/python.exe -m streamlit run streamlit_app.py
 
 Two modes, selected at the top: "Convert" (the 4-step wizard:
 upload+classify -> preview -> customize -> export) and "Compare"
 (standalone: upload an MRG plus a reference OPUS file, see where they
 diverge - see docs/superpowers/specs/2026-08-23-mrg-opus-comparison-design.md).
+
+streamlit_app.py at the repo root is the canonical entry point, but this
+module is ALSO runnable directly (`streamlit run mrg2opus/ui/app.py`) -
+that's what an existing Streamlit Cloud deploy and the devcontainer are
+configured to do, and it's the path a person naturally reaches for. See
+the sys.path guard below for why that needs help.
 """
 from __future__ import annotations
 
-import streamlit as st
+import sys
+from pathlib import Path
+
+# `streamlit run` puts the SCRIPT's own folder on sys.path - here that's
+# mrg2opus/ui, which leaves the repo root off it entirely, so the very
+# next import ("from mrg2opus.parsers import ...") raises
+# ModuleNotFoundError. Running from the root with `python -m streamlit`
+# happens to work, which is why this only ever showed up on deploy.
+# Putting the root back means either entry point works, and no host has to
+# be configured a particular way.
+_ROOT = str(Path(__file__).resolve().parents[2])
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+import streamlit as st  # noqa: E402  (must follow the sys.path guard)
 
 # Importing the lane modules registers their LayoutProfile as a side effect -
 # same requirement as cli.py.
