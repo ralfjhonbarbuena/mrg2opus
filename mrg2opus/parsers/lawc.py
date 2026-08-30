@@ -55,6 +55,7 @@ from mrg2opus.parsers.common.exclusion import is_excluded, location_is_excluded
 from mrg2opus.parsers.common.freetime import build_lawc_freetime
 from mrg2opus.parsers.common.header_grid import flatten_pod_header
 from mrg2opus.parsers.common.ordering import group_by_destination
+from mrg2opus.parsers.common.sequencing import assign_cmdt_seq_numbers, assign_route_seq
 from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema.opus_rows import OpusRowSet, RatesPortPortRow, RatesRow, RouteNoteRow
@@ -739,6 +740,26 @@ class LAWCParser(BaseMRGParser):
         for row in rates:
             row.commodity_note = note_text_by_description.get(row.commodity_group_description)
 
+        # Auto-number CMDT Seq by distinct (final, post-override)
+        # commodity_group_description, in build order - LAWC has many such
+        # blocks (each grid_rows key, Reefer, NOR, NOR's own DG-under-SEA
+        # variant, OOG), each previously defaulting to None via
+        # config.commodity_sequence_overrides.get(...) with no fallback.
+        # Route Seq then resets 1..N within each group. Must run before
+        # _derive_route_notes, which reads each row's final route_seq.
+        block_order: list[str] = []
+        seen_descriptions: set[str] = set()
+        for row in rates:
+            if row.commodity_group_description not in seen_descriptions:
+                seen_descriptions.add(row.commodity_group_description)
+                block_order.append(row.commodity_group_description)
+        block_seq = assign_cmdt_seq_numbers(block_order, config.commodity_sequence_overrides)
+        for row in rates:
+            row.cmdt_seq = block_seq[row.commodity_group_description]
+        assign_route_seq(rates)
+        for note in cmdt_notes:
+            note.header_seq = block_seq.get(note.group_description)
+
         route_notes = _derive_route_notes(rates, main_validity_start, main_validity_end)
 
         return OpusRowSet(
@@ -797,27 +818,24 @@ def _derive_route_notes(
     """Every RatesRow with a non-null route_note needs a matching entry on
     the real RN sheet (see project-opus-note-sheet-taxonomy memory) - real
     RN rows are header-only (charge_seq/code always 1/"APP", no child
-    charge-code rows, unlike CMDT NOTE). header_seq/route_seq/note_seq are
-    placeholder running numbers, not reproductions of any real OPUS-assigned
-    number - confirmed acceptable since OPUS renumbers these on import,
-    same treatment already given to CMDT NOTE's header_seq/note_seq
-    elsewhere in this codebase. header_seq groups by distinct route_note
-    text (verified: every real RN row sharing one route_note text shares
-    one header_seq); route_seq is a running counter across all qualifying
-    rows, also stamped back onto the RatesRow it came from so the two
-    sheets stay linkable."""
+    charge-code rows, unlike CMDT NOTE). header_seq groups by distinct
+    route_note text (verified: every real RN row sharing one route_note
+    text shares one header_seq) - a different, independently-confirmed
+    grouping from CMDT NOTE's own header_seq, not touched here. route_seq
+    links back to the RATES row it decorates, so it must be read from that
+    row's OWN (already final, assigned by the cmdt/route seq pass in
+    to_opus_rows before this runs) route_seq rather than a fresh counter -
+    call this only after that pass has run."""
     route_notes: list[RouteNoteRow] = []
     header_seq_by_text: dict[str, int] = {}
-    next_route_seq = 1
     for row in rates:
         if not row.route_note:
             continue
         header_seq = header_seq_by_text.setdefault(row.route_note, len(header_seq_by_text) + 1)
-        row.route_seq = next_route_seq
         route_notes.append(
             RouteNoteRow(
                 header_seq=header_seq,
-                route_seq=next_route_seq,
+                route_seq=row.route_seq,
                 note_seq=1,
                 contents=row.route_note,
                 charge_seq=1,
@@ -827,7 +845,6 @@ def _derive_route_notes(
                 application_expires=validity_end,
             )
         )
-        next_route_seq += 1
     return route_notes
 
 

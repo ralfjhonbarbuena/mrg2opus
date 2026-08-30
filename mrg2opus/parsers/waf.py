@@ -35,6 +35,7 @@ from mrg2opus.parsers.common.container_map import ContainerMap, load_container_m
 from mrg2opus.parsers.common.exclusion import is_excluded
 from mrg2opus.parsers.common.header_grid import flatten_pod_header
 from mrg2opus.parsers.common.ordering import group_by_destination
+from mrg2opus.parsers.common.sequencing import assign_cmdt_seq_numbers
 from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema.charge_codes import INDIVIDUAL_CHARGE_CODES
@@ -217,11 +218,15 @@ class WAFParser(BaseMRGParser):
 
         dr_description = resolve_commodity_description(DEFAULT_DR_DESCRIPTION, config)
         dr_code = resolve_commodity_code(DEFAULT_DR_DESCRIPTION, DEFAULT_DR_CODE, config)
-        dr_cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_DR_DESCRIPTION)
 
         dg_description = resolve_commodity_description(DEFAULT_DG_DESCRIPTION, config)
         dg_code = resolve_commodity_code(DEFAULT_DG_DESCRIPTION, DEFAULT_DG_CODE, config)
-        dg_cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_DG_DESCRIPTION)
+
+        # DR and DG are two distinct CMDT NOTE blocks under the same lane -
+        # auto-numbered 1, 2 (or an explicit override), never left blank.
+        block_seq = assign_cmdt_seq_numbers([DEFAULT_DR_DESCRIPTION, DEFAULT_DG_DESCRIPTION], config.commodity_sequence_overrides)
+        dr_cmdt_seq = block_seq[DEFAULT_DR_DESCRIPTION]
+        dg_cmdt_seq = block_seq[DEFAULT_DG_DESCRIPTION]
 
         # Group raw cells by (origin_text, pod_name) so one OPUS row covers
         # all 3 container sizes for a given origin/destination pair.
@@ -325,6 +330,8 @@ class WAFParser(BaseMRGParser):
         )
         for row in rates:
             row.commodity_note = note_text_by_description.get(row.commodity_group_description)
+        for note in cmdt_notes:
+            note.header_seq = block_seq.get(note.group_description)
 
         return OpusRowSet(rates=rates, cmdt_notes=cmdt_notes)
 

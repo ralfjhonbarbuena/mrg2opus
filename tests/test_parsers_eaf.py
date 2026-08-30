@@ -43,7 +43,11 @@ pytestmark = pytest.mark.skipif(
 #     these are user-customizable per filing (see
 #     project-mrg-lane-scope memory), not a derivable default, same
 #     category of gap already documented for LAWC/LAEC/CSE.
-RATES_IGNORE_FIELDS = {"type", "commodity_group_code", "commodity_group_description", "commodity_note"}
+#   - cmdt_seq/route_seq: EAF-KEMBA's own real filing leaves BOTH entirely
+#     blank on the RATES sheet (confirmed, not a parser gap) - the tool now
+#     always auto-generates them regardless (explicit user direction), so
+#     generated no longer matches this one filing's own blank convention.
+RATES_IGNORE_FIELDS = {"type", "commodity_group_code", "commodity_group_description", "commodity_note", "cmdt_seq", "route_seq"}
 
 
 def _run_eaf(raw_path: Path):

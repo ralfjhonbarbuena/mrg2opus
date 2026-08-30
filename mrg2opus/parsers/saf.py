@@ -20,6 +20,7 @@ from mrg2opus.parsers.common.container_map import ContainerMap, load_container_m
 from mrg2opus.parsers.common.exclusion import is_excluded
 from mrg2opus.parsers.common.header_grid import flatten_pod_header
 from mrg2opus.parsers.common.ordering import group_by_destination
+from mrg2opus.parsers.common.sequencing import assign_route_seq
 from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema.opus_rows import OpusRowSet, RatesRow, explode_rates_row
@@ -123,7 +124,10 @@ class SAFParser(BaseMRGParser):
         data: SAFRawData = raw.tables["saf"]
 
         commodity_description = resolve_commodity_description(DEFAULT_COMMODITY_DESCRIPTION, config)
-        cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_COMMODITY_DESCRIPTION)
+        # SAF has exactly one CMDT NOTE block (one validity window, one
+        # charge-code list) - DR/DG/Reefer all share it, so cmdt_seq is a
+        # constant, not something to auto-number across multiple blocks.
+        cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_COMMODITY_DESCRIPTION, 1)
         output_commodity_code = resolve_commodity_code(DEFAULT_COMMODITY_DESCRIPTION, DEFAULT_COMMODITY_CODE, config)
 
         # Collected into separate per-type blocks and concatenated at the end
@@ -253,6 +257,7 @@ class SAFParser(BaseMRGParser):
             *group_by_destination(dg_rows),
             *group_by_destination(reefer_rows),
         ]
+        assign_route_seq(rates)
         rates_port_port = [
             *group_by_destination(dr_pp),
             *group_by_destination(dg_pp),
@@ -267,6 +272,8 @@ class SAFParser(BaseMRGParser):
             rfa_effective=config.rfa_effective_date,
             rfa_expiry=config.rfa_expiry_date,
         )
+        for note in cmdt_notes:
+            note.header_seq = cmdt_seq
 
         return OpusRowSet(rates=rates, rates_port_port=rates_port_port, cmdt_notes=cmdt_notes)
 

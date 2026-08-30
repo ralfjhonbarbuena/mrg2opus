@@ -21,6 +21,7 @@ from mrg2opus.parsers.common.cmdt_notes import build_cmdt_notes, parse_included_
 from mrg2opus.parsers.common.commodity import resolve_commodity_code, resolve_commodity_description
 from mrg2opus.parsers.common.container_map import ContainerMap, load_container_map
 from mrg2opus.parsers.common.exclusion import is_excluded
+from mrg2opus.parsers.common.sequencing import assign_route_seq
 from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema.opus_rows import OpusRowSet, RatesRow, explode_rates_row
@@ -133,7 +134,9 @@ class EAFParser(BaseMRGParser):
 
     def _to_opus_rows_for_sublane(self, data: EAFSubLaneData, config: MappingProfile) -> OpusRowSet:
         commodity_description = resolve_commodity_description(DEFAULT_COMMODITY_DESCRIPTION, config)
-        cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_COMMODITY_DESCRIPTION)
+        # One CMDT NOTE block per sub-lane call (DR/DG share it) - a
+        # constant, not something to auto-number across multiple blocks.
+        cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_COMMODITY_DESCRIPTION, 1)
         output_commodity_code = resolve_commodity_code(DEFAULT_COMMODITY_DESCRIPTION, DEFAULT_COMMODITY_CODE, config)
 
         dest_matches = self.location_resolver.match_text(data.destination_text)
@@ -163,6 +166,8 @@ class EAFParser(BaseMRGParser):
             rfa_effective=config.rfa_effective_date,
             rfa_expiry=config.rfa_expiry_date,
         )
+        for note in cmdt_notes:
+            note.header_seq = cmdt_seq
         dr_rows: list[RatesRow] = []
         dg_rows: list[RatesRow] = []
         dr_pp: list = []
@@ -218,15 +223,16 @@ class EAFParser(BaseMRGParser):
                     dg_pp.extend(explode_rates_row(dg_row))
 
         rates = [*dr_rows, *dg_rows]
+        assign_route_seq(rates)
         rates_port_port = [*dr_pp, *dg_pp]
 
         # NOTE: TZDAR's ground-truth PORT-PORT sheet fills route_seq/cmdt_seq/
         # commodity_note (cross-referencing the CMDT NOTE) on every row, but
         # KEMBA's PORT-PORT sheet - in the SAME workbook, same lane - leaves
-        # them blank, same as the grouped RATES sheet does for both. Since
-        # the one lane that would confirm this convention contradicts itself
-        # between its own two sub-lanes, it's not generated here rather than
-        # guessing which sub-lane's example is the "real" rule.
+        # them blank, same as the grouped RATES sheet used to. Since the one
+        # lane that would confirm this convention contradicts itself between
+        # its own two sub-lanes, PORT-PORT still doesn't generate them - only
+        # the main RATES sheet does now (see common/sequencing.py).
 
         return OpusRowSet(rates=rates, rates_port_port=rates_port_port, cmdt_notes=cmdt_notes)
 

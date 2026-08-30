@@ -47,6 +47,7 @@ from mrg2opus.parsers.common.exclusion import is_excluded, location_is_excluded
 from mrg2opus.parsers.common.group_codes import load_group_codes
 from mrg2opus.parsers.common.header_grid import flatten_pod_header
 from mrg2opus.parsers.common.ordering import group_by_destination
+from mrg2opus.parsers.common.sequencing import assign_cmdt_seq_numbers, assign_route_seq
 from mrg2opus.parsers.common.yangtze_arbs import YangtzeRow, build_arbs, parse_yangtze_sheet
 from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.presets.models import MappingProfile
@@ -67,7 +68,7 @@ RAW_SHEET_MAIN = "CSE"
 # description - see parsers/common/commodity.py::build_notes_by_description(),
 # used in to_opus_rows() below.
 #
-# Each commodity tuple is (default_description, cmdt_seq,
+# Each commodity tuple is (default_description, _legacy_cmdt_seq,
 # default_output_code): default_description doubles as the STABLE lookup
 # key for every override dict (see parsers/common/commodity.py's module
 # docstring - it's the one identity always unique per group) AND as the
@@ -75,7 +76,12 @@ RAW_SHEET_MAIN = "CSE"
 # - "CSE" and "CSE VE" both feeding COMMODITY_MAIN's rows - now parse into
 # separate buckets); default_output_code is the CODE shown unless
 # overridden, which stays the shared parent code by default even for a
-# split-out sheet like "CSE VE".
+# split-out sheet like "CSE VE". The middle slot is a leftover, no longer
+# used to stamp RatesRow.cmdt_seq - it collapsed "CSE"/"CSE VE"/"NOR(PA)"
+# (3 distinct descriptions, hence 3 distinct CMDT NOTE blocks) onto the
+# same number just because they share code G0001. cmdt_seq is now
+# auto-numbered per distinct final description instead - see
+# assign_cmdt_seq_numbers() in to_opus_rows() below.
 COMMODITY_MAIN = (RAW_SHEET_MAIN, 1, "G0001")
 COMMODITY_VE = ("CSE VE", 1, "G0001")
 COMMODITY_MAOVLD = ("CSE (MAOVLD)", 2, "G0002")
@@ -469,7 +475,7 @@ class CSEParser(BaseMRGParser):
         note_specs: list[CommodityNoteSpec] = []
 
         for commodity, grid_rows in data.grid_rows.items():
-            default_description, cmdt_seq, default_code = commodity
+            default_description, _legacy_cmdt_seq, default_code = commodity
             description = resolve_commodity_description(default_description, config)
             output_code = resolve_commodity_code(default_description, default_code, config)
             dr_rows, dr_pp, dg_rows, dg_pp = [], [], [], []
@@ -485,7 +491,6 @@ class CSEParser(BaseMRGParser):
 
                 row = RatesRow(
                     type="C",
-                    cmdt_seq=cmdt_seq,
                     commodity_group_code=output_code,
                     commodity_group_description=description,
                     origin_code=";".join(sorted(set(origin_codes))),
@@ -520,7 +525,7 @@ class CSEParser(BaseMRGParser):
                 note_specs.append(CommodityNoteSpec(description, data.validity_start, data.validity_end, CMDT_NOTE_CHARGE_CODES))
 
         for commodity, nor_rows in data.nor_rows.items():
-            default_description, cmdt_seq, default_code = commodity
+            default_description, _legacy_cmdt_seq, default_code = commodity
             description = resolve_commodity_description(default_description, config)
             output_code = resolve_commodity_code(default_description, default_code, config)
             reefer_rows, reefer_pp = [], []
@@ -534,7 +539,6 @@ class CSEParser(BaseMRGParser):
                     continue
                 row = RatesRow(
                     type="C",
-                    cmdt_seq=cmdt_seq,
                     commodity_group_code=output_code,
                     commodity_group_description=description,
                     origin_code=";".join(sorted(set(origin_codes))),
@@ -556,7 +560,7 @@ class CSEParser(BaseMRGParser):
             if reefer_rows:
                 note_specs.append(CommodityNoteSpec(description, data.validity_start, data.validity_end, CMDT_NOTE_CHARGE_CODES))
 
-        ig_default_description, ig_cmdt_seq, ig_default_code = COMMODITY_INGAUGE
+        ig_default_description, _legacy_ig_cmdt_seq, ig_default_code = COMMODITY_INGAUGE
         ig_description = resolve_commodity_description(ig_default_description, config)
         ig_output_code = resolve_commodity_code(ig_default_description, ig_default_code, config)
         o_rows, o_pp, f_rows, f_pp = [], [], [], []
@@ -570,7 +574,6 @@ class CSEParser(BaseMRGParser):
                 continue
             base = RatesRow(
                 type="C",
-                cmdt_seq=ig_cmdt_seq,
                 commodity_group_code=ig_output_code,
                 commodity_group_description=ig_description,
                 origin_code=";".join(sorted(set(origin_codes))),
@@ -607,6 +610,25 @@ class CSEParser(BaseMRGParser):
             rfa_effective=config.rfa_effective_date,
             rfa_expiry=config.rfa_expiry_date,
         )
+
+        # Auto-number CMDT Seq by distinct (final, post-override)
+        # commodity_group_description, in build order - NOT by the
+        # commodity tuples' own hardcoded seq constants above, which
+        # collapse "CSE"/"CSE VE"/"NOR(PA)" (distinct descriptions, hence
+        # distinct CMDT NOTE blocks) onto the same number just because they
+        # share code G0001. Route Seq then resets 1..N within each group.
+        block_order: list[str] = []
+        seen_descriptions: set[str] = set()
+        for row in rates:
+            if row.commodity_group_description not in seen_descriptions:
+                seen_descriptions.add(row.commodity_group_description)
+                block_order.append(row.commodity_group_description)
+        block_seq = assign_cmdt_seq_numbers(block_order, config.commodity_sequence_overrides)
+        for row in rates:
+            row.cmdt_seq = block_seq[row.commodity_group_description]
+        assign_route_seq(rates)
+        for note in cmdt_notes:
+            note.header_seq = block_seq.get(note.group_description)
 
         arbs = self._build_arbs(data)
         special_notes = self._build_special_notes(data)

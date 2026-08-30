@@ -48,7 +48,11 @@ pytestmark = pytest.mark.skipif(
 #     file leaves commodity_group_code entirely blank - user-customizable
 #     per filing (see project-mrg-lane-scope memory), same category of gap
 #     already documented for EAF/LAWC/LAEC.
-RATES_IGNORE_FIELDS = {"type", "commodity_group_description", "commodity_group_code", "cmdt_seq", "commodity_note"}
+#   - route_seq: this real reference file leaves it entirely blank too
+#     (confirmed) - the tool now always auto-generates it regardless
+#     (explicit user direction), so generated no longer matches this one
+#     filing's own blank convention.
+RATES_IGNORE_FIELDS = {"type", "commodity_group_description", "commodity_group_code", "cmdt_seq", "commodity_note", "route_seq"}
 
 
 def _run_cse():

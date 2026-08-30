@@ -328,7 +328,9 @@ class Nz1SeaParser(BaseMRGParser):
 
         description = resolve_commodity_description(DEFAULT_DESCRIPTION, config)
         code = resolve_commodity_code(DEFAULT_DESCRIPTION, DEFAULT_CODE, config)
-        cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_DESCRIPTION)
+        # One CMDT NOTE block covers DR/RF/RAD/DG all together here (a
+        # constant, not something to auto-number across multiple blocks).
+        cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_DESCRIPTION, 1)
 
         dest_matches = self.location_resolver.match_text(_METRO_PORT_RE.sub(" ", data.destination_text))
         if not dest_matches or any(m.needs_review for m in dest_matches):
@@ -397,6 +399,8 @@ class Nz1SeaParser(BaseMRGParser):
             row.route_seq = i
 
         cmdt_notes = self._build_cmdt_notes(data, config)
+        for note in cmdt_notes:
+            note.header_seq = cmdt_seq
         note_text = cmdt_notes[0].contents if cmdt_notes else None
         for row in rates:
             row.commodity_note = note_text

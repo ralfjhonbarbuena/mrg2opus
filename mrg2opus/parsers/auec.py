@@ -31,6 +31,7 @@ from mrg2opus.parsers.base import BaseMRGParser, RawExtraction
 from mrg2opus.parsers.common.commodity import resolve_commodity_code, resolve_commodity_description
 from mrg2opus.parsers.common.exclusion import is_excluded
 from mrg2opus.parsers.common.ordering import group_by_destination
+from mrg2opus.parsers.common.sequencing import assign_cmdt_seq_numbers
 from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema.charge_codes import CHARGE_CODE_NAMES
@@ -413,11 +414,13 @@ class AUECParser(BaseMRGParser):
 
         main_description = resolve_commodity_description(DEFAULT_MAIN_DESCRIPTION, config)
         main_code = resolve_commodity_code(DEFAULT_MAIN_DESCRIPTION, DEFAULT_MAIN_CODE, config)
-        main_cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_MAIN_DESCRIPTION)
 
         nzj_description = resolve_commodity_description(DEFAULT_NZJ_DESCRIPTION, config)
         nzj_code = resolve_commodity_code(DEFAULT_NZJ_DESCRIPTION, DEFAULT_NZJ_CODE, config)
-        nzj_cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_NZJ_DESCRIPTION)
+
+        block_seq = assign_cmdt_seq_numbers([DEFAULT_MAIN_DESCRIPTION, DEFAULT_NZJ_DESCRIPTION], config.commodity_sequence_overrides)
+        main_cmdt_seq = block_seq[DEFAULT_MAIN_DESCRIPTION]
+        nzj_cmdt_seq = block_seq[DEFAULT_NZJ_DESCRIPTION]
 
         def stamp(rows: list[RatesRow], code: str, description: str, cmdt_seq: int | None) -> None:
             for row in rows:
@@ -456,7 +459,7 @@ class AUECParser(BaseMRGParser):
                 data.validity_start, data.validity_end, excluded_codes,
                 config.rfa_effective_date, config.rfa_expiry_date,
             )
-            cmdt_notes.extend(row.model_copy(update={"group_description": nzj_description}) for row in nzj_notes)
+            cmdt_notes.extend(row.model_copy(update={"group_description": nzj_description, "header_seq": nzj_cmdt_seq}) for row in nzj_notes)
             note_text = nzj_notes[0].contents if nzj_notes else None
             for row in nzj_rows:
                 row.commodity_note = note_text
@@ -465,7 +468,7 @@ class AUECParser(BaseMRGParser):
                 data.validity_start, data.validity_end, excluded_codes,
                 config.rfa_effective_date, config.rfa_expiry_date,
             )
-            cmdt_notes.extend(row.model_copy(update={"group_description": main_description}) for row in main_notes)
+            cmdt_notes.extend(row.model_copy(update={"group_description": main_description, "header_seq": main_cmdt_seq}) for row in main_notes)
             note_text = main_notes[0].contents if main_notes else None
             for row in main_rows:
                 row.commodity_note = note_text

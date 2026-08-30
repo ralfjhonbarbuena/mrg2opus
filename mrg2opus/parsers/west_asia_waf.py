@@ -52,6 +52,7 @@ from mrg2opus.parsers.common.container_map import ContainerMap, load_container_m
 from mrg2opus.parsers.common.exclusion import is_excluded
 from mrg2opus.parsers.common.header_grid import flatten_pod_header
 from mrg2opus.parsers.common.ordering import group_by_destination
+from mrg2opus.parsers.common.sequencing import assign_cmdt_seq_numbers
 from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema.charge_codes import CHARGE_CODE_NAMES, INDIVIDUAL_CHARGE_CODES
@@ -220,6 +221,9 @@ class WestAsiaWAFParser(BaseMRGParser):
         dr_code = resolve_commodity_code(DEFAULT_DR_DESCRIPTION, DEFAULT_DR_CODE, config)
         dg_description = resolve_commodity_description(DEFAULT_DG_DESCRIPTION, config)
         dg_code = resolve_commodity_code(DEFAULT_DG_DESCRIPTION, DEFAULT_DG_CODE, config)
+        block_seq = assign_cmdt_seq_numbers([DEFAULT_DR_DESCRIPTION, DEFAULT_DG_DESCRIPTION], config.commodity_sequence_overrides)
+        dr_cmdt_seq = block_seq[DEFAULT_DR_DESCRIPTION]
+        dg_cmdt_seq = block_seq[DEFAULT_DG_DESCRIPTION]
 
         groups: dict[tuple[str, tuple[str, ...]], dict] = {}
         for rc in data.rate_cells:
@@ -238,6 +242,7 @@ class WestAsiaWAFParser(BaseMRGParser):
                 continue
             dr_rows.append(
                 RatesRow(
+                    cmdt_seq=dr_cmdt_seq,
                     commodity_group_code=dr_code,
                     commodity_group_description=dr_description,
                     origin_code=origin_code,
@@ -260,7 +265,7 @@ class WestAsiaWAFParser(BaseMRGParser):
         dg_rows: list[RatesRow] = []
         if not config.skip_dg_generation.get(DEFAULT_DR_DESCRIPTION, False):
             dg_rows = [
-                row.model_copy(update={"cgo_type": "DG", "commodity_group_code": dg_code, "commodity_group_description": dg_description})
+                row.model_copy(update={"cgo_type": "DG", "commodity_group_code": dg_code, "commodity_group_description": dg_description, "cmdt_seq": dg_cmdt_seq})
                 for row in dr_rows
             ]
 
@@ -274,8 +279,12 @@ class WestAsiaWAFParser(BaseMRGParser):
 
         cmdt_notes: list[CmdtNoteRow] = []
         note_text_by_description: dict[str, str | None] = {}
-        for description in [d for d in (dr_description, dg_description) if any(r.commodity_group_description == d for r in rates)]:
+        for description, description_key in ((dr_description, DEFAULT_DR_DESCRIPTION), (dg_description, DEFAULT_DG_DESCRIPTION)):
+            if not any(r.commodity_group_description == description for r in rates):
+                continue
             notes = self._build_cmdt_notes(data, config)
+            for note in notes:
+                note.header_seq = block_seq[description_key]
             cmdt_notes.extend(notes)
             note_text_by_description[description] = notes[0].contents if notes else None
         for row in rates:

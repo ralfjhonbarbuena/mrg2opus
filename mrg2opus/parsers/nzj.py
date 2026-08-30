@@ -318,7 +318,9 @@ class NZJParser(BaseMRGParser):
 
         description = resolve_commodity_description(DEFAULT_DESCRIPTION, config)
         code = resolve_commodity_code(DEFAULT_DESCRIPTION, DEFAULT_CODE, config)
-        cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_DESCRIPTION)
+        # One CMDT NOTE block covers every prefix/cargo-type combo here (a
+        # constant, not something to auto-number across multiple blocks).
+        cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_DESCRIPTION, 1)
 
         akl_dest = self._resolve_destination(data.akl_pod_text)
         lnt_dest = self._resolve_destination(data.lnt_pod_text)
@@ -442,9 +444,9 @@ class NZJParser(BaseMRGParser):
         # in AUEC/AUWC/AUBP.
         isl_scope_field = "por" if data.is_tier1 else "pol"
         cmdt_notes = [
-            row.model_copy(update={"group_description": description, isl_scope_field: ISL_SCOPE_POL})
+            row.model_copy(update={"group_description": description, "header_seq": cmdt_seq, isl_scope_field: ISL_SCOPE_POL})
             if row.code == "ISL"
-            else row.model_copy(update={"group_description": description})
+            else row.model_copy(update={"group_description": description, "header_seq": cmdt_seq})
             for row in cmdt_notes
         ]
         note_text = cmdt_notes[0].contents if cmdt_notes else None

@@ -65,6 +65,7 @@ from mrg2opus.parsers.common.freetime import build_laec_freetime
 from mrg2opus.parsers.common.group_codes import load_group_codes
 from mrg2opus.parsers.common.header_grid import flatten_pod_header
 from mrg2opus.parsers.common.ordering import group_by_destination
+from mrg2opus.parsers.common.sequencing import assign_cmdt_seq_numbers, assign_route_seq
 from mrg2opus.parsers.common.yangtze_arbs import build_arbs, parse_yangtze_sheet
 from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.presets.models import MappingProfile
@@ -515,6 +516,25 @@ class LAECParser(BaseMRGParser):
         for row in rates:
             row.commodity_note = note_text_by_description.get(row.commodity_group_description)
 
+        # Auto-number CMDT Seq by distinct (final, post-override)
+        # commodity_group_description, in build order - LAEC has many such
+        # blocks (each grid_rows/ingauge_rows key, NOR, plus ECSA add-on
+        # rows which inherit their base row's description), each previously
+        # defaulting to None via config.commodity_sequence_overrides.get(...)
+        # with no fallback. Route Seq then resets 1..N within each group.
+        block_order: list[str] = []
+        seen_descriptions: set[str] = set()
+        for row in rates:
+            if row.commodity_group_description not in seen_descriptions:
+                seen_descriptions.add(row.commodity_group_description)
+                block_order.append(row.commodity_group_description)
+        block_seq = assign_cmdt_seq_numbers(block_order, config.commodity_sequence_overrides)
+        for row in rates:
+            row.cmdt_seq = block_seq[row.commodity_group_description]
+        assign_route_seq(rates)
+        for note in cmdt_notes:
+            note.header_seq = block_seq.get(note.group_description)
+
         freetime = build_laec_freetime(data.freetime_variant, data.validity_start, data.validity_end)
 
         return OpusRowSet(
@@ -736,7 +756,10 @@ class LAECLuxParser(LAECParser):
 
         code, default_description, _ = COMMODITY_LUX
         description = resolve_commodity_description(default_description, config)
-        cmdt_seq = config.commodity_sequence_overrides.get(default_description)
+        # One CMDT NOTE block for the whole lane (DR/DG/ECSA add-ons all
+        # share it) - a constant, not something to auto-number across
+        # multiple blocks.
+        cmdt_seq = config.commodity_sequence_overrides.get(default_description, 1)
         output_code = resolve_commodity_code(default_description, code, config)
 
         dr_rows, dr_pp, dg_rows, dg_pp = [], [], [], []
@@ -797,9 +820,12 @@ class LAECLuxParser(LAECParser):
             rfa_expiry=config.rfa_expiry_date,
             service_lane="LUX",
         )
+        for note in notes:
+            note.header_seq = cmdt_seq
         note_text = notes[0].contents if notes else None
         for row in rates:
             row.commodity_note = note_text
+        assign_route_seq(rates)
 
         freetime = build_laec_freetime("lux", data.validity_start, data.validity_end)
 

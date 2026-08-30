@@ -42,6 +42,7 @@ from mrg2opus.parsers.base import BaseMRGParser, RawExtraction
 from mrg2opus.parsers.common.commodity import resolve_commodity_code, resolve_commodity_description
 from mrg2opus.parsers.common.exclusion import is_excluded
 from mrg2opus.parsers.common.ordering import group_by_destination
+from mrg2opus.parsers.common.sequencing import assign_cmdt_seq_numbers
 from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema.charge_codes import CHARGE_CODE_NAMES
@@ -275,15 +276,19 @@ class AUWCParser(BaseMRGParser):
 
         main_description = resolve_commodity_description(DEFAULT_MAIN_DESCRIPTION, config)
         main_code = resolve_commodity_code(DEFAULT_MAIN_DESCRIPTION, DEFAULT_MAIN_CODE, config)
-        main_cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_MAIN_DESCRIPTION)
 
         rf_description = resolve_commodity_description(DEFAULT_RF_DESCRIPTION, config)
         rf_code = resolve_commodity_code(DEFAULT_RF_DESCRIPTION, DEFAULT_RF_CODE, config)
-        rf_cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_RF_DESCRIPTION)
 
         nor_description = resolve_commodity_description(DEFAULT_NOR_DESCRIPTION, config)
         nor_code = resolve_commodity_code(DEFAULT_NOR_DESCRIPTION, DEFAULT_NOR_CODE, config)
-        nor_cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_NOR_DESCRIPTION)
+
+        block_seq = assign_cmdt_seq_numbers(
+            [DEFAULT_MAIN_DESCRIPTION, DEFAULT_RF_DESCRIPTION, DEFAULT_NOR_DESCRIPTION], config.commodity_sequence_overrides
+        )
+        main_cmdt_seq = block_seq[DEFAULT_MAIN_DESCRIPTION]
+        rf_cmdt_seq = block_seq[DEFAULT_RF_DESCRIPTION]
+        nor_cmdt_seq = block_seq[DEFAULT_NOR_DESCRIPTION]
 
         dr_rows: list[RatesRow] = []
         rf_rows: list[RatesRow] = []
@@ -405,10 +410,10 @@ class AUWCParser(BaseMRGParser):
 
         excluded_codes = frozenset(config.excluded_charge_codes)
         cmdt_notes: list[CmdtNoteRow] = []
-        for group_rows, description in (
-            (main_group_rows, main_description),
-            (rf_rows, rf_description),
-            (nor_rows, nor_description),
+        for group_rows, description, group_cmdt_seq in (
+            (main_group_rows, main_description, main_cmdt_seq),
+            (rf_rows, rf_description, rf_cmdt_seq),
+            (nor_rows, nor_description, nor_cmdt_seq),
         ):
             if not group_rows:
                 continue
@@ -416,7 +421,7 @@ class AUWCParser(BaseMRGParser):
                 data.validity_start, data.validity_end, excluded_codes,
                 config.rfa_effective_date, config.rfa_expiry_date,
             )
-            cmdt_notes.extend(row.model_copy(update={"group_description": description}) for row in notes)
+            cmdt_notes.extend(row.model_copy(update={"group_description": description, "header_seq": group_cmdt_seq}) for row in notes)
             note_text = notes[0].contents if notes else None
             for row in group_rows:
                 row.commodity_note = note_text

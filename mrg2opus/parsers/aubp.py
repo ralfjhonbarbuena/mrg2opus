@@ -148,6 +148,7 @@ from mrg2opus.parsers.common.cmdt_notes import build_cmdt_notes
 from mrg2opus.parsers.common.commodity import resolve_commodity_code, resolve_commodity_description
 from mrg2opus.parsers.common.exclusion import is_excluded
 from mrg2opus.parsers.common.ordering import group_by_destination
+from mrg2opus.parsers.common.sequencing import assign_cmdt_seq_numbers
 from mrg2opus.parsers.registry import LayoutProfile, register
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema.opus_rows import CmdtNoteRow, OpusRowSet, RatesRow
@@ -764,15 +765,19 @@ class AUBPParser(BaseMRGParser):
 
         main_description = resolve_commodity_description(DEFAULT_MAIN_DESCRIPTION, config)
         main_code = resolve_commodity_code(DEFAULT_MAIN_DESCRIPTION, DEFAULT_MAIN_CODE, config)
-        main_cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_MAIN_DESCRIPTION)
 
         rf_description = resolve_commodity_description(DEFAULT_RF_DESCRIPTION, config)
         rf_code = resolve_commodity_code(DEFAULT_RF_DESCRIPTION, DEFAULT_RF_CODE, config)
-        rf_cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_RF_DESCRIPTION)
 
         rad_description = resolve_commodity_description(DEFAULT_RAD_DESCRIPTION, config)
         rad_code = resolve_commodity_code(DEFAULT_RAD_DESCRIPTION, DEFAULT_RAD_CODE, config)
-        rad_cmdt_seq = config.commodity_sequence_overrides.get(DEFAULT_RAD_DESCRIPTION)
+
+        block_seq = assign_cmdt_seq_numbers(
+            [DEFAULT_MAIN_DESCRIPTION, DEFAULT_RF_DESCRIPTION, DEFAULT_RAD_DESCRIPTION], config.commodity_sequence_overrides
+        )
+        main_cmdt_seq = block_seq[DEFAULT_MAIN_DESCRIPTION]
+        rf_cmdt_seq = block_seq[DEFAULT_RF_DESCRIPTION]
+        rad_cmdt_seq = block_seq[DEFAULT_RAD_DESCRIPTION]
 
         main_rows, rf_rows, rad_rows, incl_by_origin = self._build_main_sheet_rows(data)
 
@@ -828,14 +833,14 @@ class AUBPParser(BaseMRGParser):
         excluded_codes = frozenset(config.excluded_charge_codes)
         cmdt_notes: list[CmdtNoteRow] = []
         full_charges = _build_scoped_charge_list(incl_by_origin, excluded_codes)
-        for group_rows, description in ((main_group_rows, main_description), (rf_rows, rf_description)):
+        for group_rows, description, group_cmdt_seq in ((main_group_rows, main_description, main_cmdt_seq), (rf_rows, rf_description, rf_cmdt_seq)):
             if not group_rows:
                 continue
             notes = _build_cmdt_notes(
                 data.validity_start, data.validity_end, full_charges,
                 config.rfa_effective_date, config.rfa_expiry_date,
             )
-            cmdt_notes.extend(row.model_copy(update={"group_description": description}) for row in notes)
+            cmdt_notes.extend(row.model_copy(update={"group_description": description, "header_seq": group_cmdt_seq}) for row in notes)
             note_text = notes[0].contents if notes else None
             for row in group_rows:
                 row.commodity_note = note_text
@@ -846,7 +851,7 @@ class AUBPParser(BaseMRGParser):
                 data.validity_start, data.validity_end, blanket_only,
                 config.rfa_effective_date, config.rfa_expiry_date,
             )
-            cmdt_notes.extend(row.model_copy(update={"group_description": rad_description}) for row in notes)
+            cmdt_notes.extend(row.model_copy(update={"group_description": rad_description, "header_seq": rad_cmdt_seq}) for row in notes)
             note_text = notes[0].contents if notes else None
             for row in rad_rows:
                 row.commodity_note = note_text
