@@ -99,3 +99,32 @@ def test_lawc_route_notes_rn_sheet_content_matches_reference():
     assert built_this_task, "expected at least some of the categories this task built to actually be present"
     mismatches = {k: (generated.get(k, 0), expected.get(k, 0)) for k in built_this_task if generated.get(k, 0) != expected.get(k, 0)}
     assert not mismatches, f"generated vs expected counts differ: {mismatches}"
+
+
+def test_every_rn_row_points_at_a_rates_row_that_carries_the_note():
+    """An RN row addresses its RATES row by (Header Seq, Route Seq), so
+    every RN row must land on a real RATES row whose own Route Note
+    (column AC) is populated - otherwise the RN sheet describes routes the
+    RATES sheet says have no note (user-reported, 2026-08-31).
+
+    Route Seq only counts 1..N within a commodity block, so this holds
+    only while Header Seq names that block; grouping it by note text
+    instead - as this lane used to - broke 602 of 649 links. The other
+    RN-emitting lanes (TAD's three, West Asia) pass this by construction,
+    having always keyed on cmdt_seq.
+    """
+    row_set = _run_lawc_fak()
+    assert row_set.route_notes, "expected this lane to emit RN rows at all"
+
+    rates_by_key = {(r.cmdt_seq, r.route_seq): r for r in row_set.rates}
+    unmatched = [rn for rn in row_set.route_notes if (rn.header_seq, rn.route_seq) not in rates_by_key]
+    assert not unmatched, f"{len(unmatched)} RN rows point at no RATES row, e.g. {unmatched[:3]}"
+
+    blank_ac = [
+        rn for rn in row_set.route_notes
+        if not rates_by_key[(rn.header_seq, rn.route_seq)].route_note
+    ]
+    assert not blank_ac, f"{len(blank_ac)} RN rows point at a RATES row with a blank Route Note"
+
+    # ...and the reverse: nothing on RATES is left without its RN row.
+    assert len(row_set.route_notes) == sum(1 for r in row_set.rates if r.route_note)

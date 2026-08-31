@@ -807,23 +807,36 @@ def _derive_route_notes(
     """Every RatesRow with a non-null route_note needs a matching entry on
     the real RN sheet (see project-opus-note-sheet-taxonomy memory) - real
     RN rows are header-only (charge_seq/code always 1/"APP", no child
-    charge-code rows, unlike CMDT NOTE). header_seq groups by distinct
-    route_note text (verified: every real RN row sharing one route_note
-    text shares one header_seq) - a different, independently-confirmed
-    grouping from CMDT NOTE's own header_seq, not touched here. route_seq
-    links back to the RATES row it decorates, so it must be read from that
-    row's OWN (already final, assigned by the cmdt/route seq pass in
-    to_opus_rows before this runs) route_seq rather than a fresh counter -
-    call this only after that pass has run."""
+    charge-code rows, unlike CMDT NOTE).
+
+    An RN row addresses the RATES row it decorates by (header_seq,
+    route_seq), so both must be read off that row: route_seq only counts
+    1..N WITHIN a commodity block, which makes it ambiguous unless
+    header_seq names the block. This used to group header_seq by distinct
+    route_note TEXT instead, on the reading that "every real RN row
+    sharing one route_note text shares one header_seq" - true of the one
+    text visible at the time, but the full LWE ground truth disproves it:
+    the identical "Rates are applicable for Vessel Service Lane:" text is
+    filed under three separate headers (1015/1016/1017, 56/32/196 rows),
+    while header 1019 covers four different texts (OH/OW/OWOH plus that
+    same one) - and its 204 rows are exactly our OOG block's 204. Five
+    consecutive headers for five commodity blocks. The text grouping left
+    most RN rows pointing at a route whose own RATES column AC was blank
+    (user-reported, 2026-08-31); every other RN-emitting lane (TAD's
+    three, West Asia) already keys on cmdt_seq.
+
+    Both numbers must therefore be read from the row's OWN already-final
+    values, assigned by the cmdt/route seq pass in to_opus_rows - call
+    this only after that pass has run. The absolute numbers differ from a
+    real filing's (OPUS assigns those itself, from 1015 here); what has
+    to hold is that RN and RATES agree on them."""
     route_notes: list[RouteNoteRow] = []
-    header_seq_by_text: dict[str, int] = {}
     for row in rates:
         if not row.route_note:
             continue
-        header_seq = header_seq_by_text.setdefault(row.route_note, len(header_seq_by_text) + 1)
         route_notes.append(
             RouteNoteRow(
-                header_seq=header_seq,
+                header_seq=row.cmdt_seq,
                 route_seq=row.route_seq,
                 note_seq=1,
                 contents=row.route_note,
