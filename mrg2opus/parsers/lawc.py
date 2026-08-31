@@ -200,8 +200,10 @@ def _explode_lawc(
     origin_codes = [c for c in row.origin_code.split(";") if c] or [row.origin_code]
     dest_codes = [c for c in row.destination_code.split(";") if c] or [row.destination_code]
     data = row.model_dump()
-    data["cmdt_seq"] = None
     data["commodity_note"] = None
+    # See _explode_group()'s note: cmdt_seq is stamped after the fact from
+    # this key, which survives LAWC's own PP_COMMODITY group remap.
+    data["source_group"] = row.commodity_group_description
     if route_note_override is not _UNSET:
         data["route_note"] = route_note_override
     out = []

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Hashable, TypeVar
 
-from mrg2opus.schema.opus_rows import RatesRow
+from mrg2opus.schema.opus_rows import CmdtNoteRow, OpusRowSet, RatesPortPortRow, RatesRow
 
 _K = TypeVar("_K", bound=Hashable)
 
@@ -62,3 +62,72 @@ def assign_route_seq(rates: list[RatesRow]) -> None:
     for row in rates:
         counters[row.cmdt_seq] = counters.get(row.cmdt_seq, 0) + 1
         row.route_seq = counters[row.cmdt_seq]
+
+
+def sync_port_port_cmdt_seq(rates: list[RatesRow], rates_port_port: list[RatesPortPortRow]) -> None:
+    """Give every exploded OPUS RATES PORT-PORT row the same CMDT Seq as
+    the RATES row it came from, so the two sheets line up on commodity
+    seq + commodity code (user-reported, 2026-08-31).
+
+    It can't be done at explode time: a lane builds its PORT-PORT rows
+    inside the same loop that builds RATES, and only assigns cmdt_seq
+    once every group is known - so the source row's number is still None
+    when the copy is taken. Keyed on RatesPortPortRow.source_group (the
+    ORIGINAL group description, recorded at explode time) rather than the
+    exploded row's own commodity_group_description, because LAWC rewrites
+    that on its PORT-PORT rows. Rows whose group isn't in `rates` at all
+    are left as they are."""
+    if not rates_port_port:
+        return
+    seq_by_group: dict[str, int | None] = {}
+    for row in rates:
+        seq_by_group.setdefault(row.commodity_group_description, row.cmdt_seq)
+    for row in rates_port_port:
+        key = row.source_group if row.source_group is not None else row.commodity_group_description
+        if key in seq_by_group:
+            row.cmdt_seq = seq_by_group[key]
+
+
+def collapse_note_block_sequences(notes: list[CmdtNoteRow]) -> None:
+    """Keep Header Seq on a CMDT NOTE / SPECIAL NOTE block's FIRST row only,
+    and put Note Seq 1 beside it (user-reported, 2026-08-31).
+
+    Both were wrong: parsers stamp header_seq onto every row of a block
+    (`for note in notes: note.header_seq = seq`), so the same number
+    repeated down the sheet, and nothing ever set note_seq, so it came out
+    blank everywhere. Real filings put both on the parent row alone and
+    leave every child row blank - confirmed against EAF-KEMBA's "CMDT
+    NOTE", WAF's "SRCHG" and LAEC FAK's "SPECIAL NOTE" sheets.
+
+    A row with non-blank `contents` starts a block; the blank-contents
+    rows after it are its children. That's the same invariant
+    audit/compare.py::reconstruct_blocks() already keys on, and the one
+    the writer's fill-down produces. Deliberately NOT applied to ROUTE
+    NOTE rows: LAWC's real "RN" sheet repeats one header_seq across every
+    route row and carries note_seq 1 on all of them, so the same
+    collapse there would be a regression.
+
+    An existing note_seq on a parent is left alone - CSE and LAEC file
+    theirs under lane-specific numbers confirmed against their own ground
+    truth, not 1. If no row carries contents at all the list is left
+    untouched, rather than blanking a sheet whose shape this doesn't
+    describe."""
+    if not any(str(n.contents or "").strip() for n in notes):
+        return
+    for note in notes:
+        if str(note.contents or "").strip():
+            if note.note_seq is None:
+                note.note_seq = 1
+        else:
+            note.header_seq = None
+            note.note_seq = None
+
+
+def finalize_sequences(row_set: OpusRowSet) -> None:
+    """Every cross-sheet sequencing fixup that can only run once a lane has
+    finished building, applied in place. Lives here rather than in each
+    parser because all 17 lanes need identical behavior and each was
+    getting it subtly differently."""
+    sync_port_port_cmdt_seq(row_set.rates, row_set.rates_port_port)
+    collapse_note_block_sequences(row_set.cmdt_notes)
+    collapse_note_block_sequences(row_set.special_notes)

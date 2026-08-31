@@ -172,14 +172,23 @@ RN_ROW_FIELDS = [
     "direct_call", "bar_type", "s_i", "mty_pickup_cy", "mty_return_cy", "premium",
 ]
 
-# --- FREETIME: 2-row header, 46 columns --------------------------------------
-# Verified directly against reference/2_OPUS/15_LAWC FAK's and 19_LAEC FAK's
-# real "FREETIME" sheets - a per-lane STATIC reference table (RFA/tariff
-# free-time-allowance schedule) that is not derived from the raw MRG at all
+# --- FREETIME ----------------------------------------------------------------
+# The 46-column shape below is what a DOWNLOADED OPUS filing looks like -
+# verified directly against reference/2_OPUS/15_LAWC FAK's and 19_LAEC FAK's
+# real "FREETIME" sheets, a per-lane STATIC reference table (RFA/tariff
+# free-time-allowance schedule) not derived from the raw MRG at all
 # (confirmed byte-identical across every LAWC ground truth sample seen, and
 # identical-apart-from-EFF/EXP-DT across every LAEC one) - see
 # parsers/common/freetime.py for the concrete per-lane tables.
-FREETIME_HEADER_GROUP = [
+#
+# We generate an UPLOAD, not a download, so the columns OPUS assigns on its
+# own side are dropped on the way out (user direction, 2026-08-31): "RFA
+# No.", "Status", and everything from column AO ("DAR No.") rightwards.
+# They're kept on FreetimeRow, and in the FREETIME_FULL_* lists here,
+# because every reference/2_OPUS FREETIME sheet still carries all 46 -
+# that's the shape the ground-truth tests read back. FREETIME_* (no
+# FULL) is the narrower shape the writer actually emits.
+FREETIME_FULL_HEADER_GROUP = [
     "Seq.", "RFA No.", "Status", "Tariff", "EFF DT", "EXP DT", "CNTR/Cargo", "IMDG\nClass", "PSA Grp.",
     "Coverage", "Coverage", "Coverage", "Free Time", "Free Time", "Free Time",
     "F/Time EXCL", "F/Time EXCL", "F/Time EXCL",
@@ -190,14 +199,14 @@ FREETIME_HEADER_GROUP = [
     "CNTR Q'TY", "CNTR Q'TY", "Tiered\n Free\n Time", "Remark",
     "DAR No.", "Ver.", "Approval No.", "Proposal No.", "Customer", "Customer",
 ]
-FREETIME_HEADER_FIELD = [
+FREETIME_FULL_HEADER_FIELD = [
     None, None, None, None, None, None, None, None, None,
     "CN", "RGN", "LOC", "Tier", "Add", "Total", "SAT", "SUN", "H/day",
     "CT", "CN", "RGN", "LOC", "CN", "RGN", "LOC", "Code", "Name", "Code", "Name", None,
     "From", "Up to", "20 FT", "40 FT", "H/C", "45 FT",
     "From", "Up to", None, None, None, None, None, None, "Code", "Name",
 ]
-FREETIME_ROW_FIELDS = [
+FREETIME_FULL_ROW_FIELDS = [
     "seq", "rfa_no", "status", "tariff", "eff_dt", "exp_dt", "cntr_cargo", "imdg_class", "psa_grp",
     "coverage_cn", "coverage_rgn", "coverage_loc", "free_time_tier", "free_time_add", "free_time_total",
     "ftime_excl_sat", "ftime_excl_sun", "ftime_excl_hday",
@@ -208,6 +217,19 @@ FREETIME_ROW_FIELDS = [
     "cntr_qty_from", "cntr_qty_upto", "tiered_free_time", "remark",
     "dar_no", "ver", "approval_no", "proposal_no", "customer_code", "customer_name",
 ]
+
+# Assigned by OPUS itself (the RFA/DAR paperwork identifiers and the
+# approval status), so an upload must leave them off entirely rather than
+# send back the reference table's values.
+FREETIME_UNFILED_FIELDS = frozenset({
+    "rfa_no", "status",
+    "dar_no", "ver", "approval_no", "proposal_no", "customer_code", "customer_name",
+})
+
+_FREETIME_KEPT = [i for i, f in enumerate(FREETIME_FULL_ROW_FIELDS) if f not in FREETIME_UNFILED_FIELDS]
+FREETIME_HEADER_GROUP = [FREETIME_FULL_HEADER_GROUP[i] for i in _FREETIME_KEPT]
+FREETIME_HEADER_FIELD = [FREETIME_FULL_HEADER_FIELD[i] for i in _FREETIME_KEPT]
+FREETIME_ROW_FIELDS = [FREETIME_FULL_ROW_FIELDS[i] for i in _FREETIME_KEPT]
 
 # --- Legacy bundled-sample sheet names ---------------------------------------
 # These match the literal sheet names inside the older, hand-prepared

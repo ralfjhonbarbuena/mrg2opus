@@ -62,6 +62,16 @@ class RatesPortPortRow(RatesRow):
     per port, it just repeats the whole grouped description string.
     """
 
+    # Internal bookkeeping, never written to a sheet - the writer picks
+    # columns by name from RATES_PORT_PORT_ROW_FIELDS, which doesn't list
+    # this. Holds the commodity_group_description of the RatesRow this row
+    # was exploded from, BEFORE any lane-specific PORT-PORT remap (LAWC
+    # rewrites the group description on its exploded rows), which is what
+    # lets the pipeline stamp each row with its group's FINAL cmdt_seq -
+    # a number the parsers only assign after exploding. Same idea as
+    # CmdtNoteRow.group_description.
+    source_group: Optional[str] = None
+
 
 def _explode_group(row: RatesRow) -> list[RatesPortPortRow]:
     origin_codes = [c for c in row.origin_code.split(";") if c]
@@ -72,13 +82,19 @@ def _explode_group(row: RatesRow) -> list[RatesPortPortRow]:
         dest_codes = [row.destination_code]
 
     data = row.model_dump()
-    # cmdt_seq and commodity_note are properties of the grouped view, not
-    # the exploded one - confirmed against CSE's ground truth (OPUS RATES
-    # has cmdt_seq=1/2/3, OPUS RATES PORT-PORT leaves it blank on every
-    # row) and LAEC's (OPUS RATES copies the group's CMDT NOTE Contents
-    # text into every row's commodity_note, OPUS RATES PORT-PORT doesn't).
-    data["cmdt_seq"] = None
+    # commodity_note is a property of the grouped view, not the exploded
+    # one - confirmed against LAEC's ground truth (OPUS RATES copies the
+    # group's CMDT NOTE Contents text into every row's commodity_note,
+    # OPUS RATES PORT-PORT doesn't).
+    #
+    # cmdt_seq used to be blanked here too, on the strength of the old
+    # bundled CSE.xlsx fixture; no real filing in reference/2_OPUS has a
+    # PORT-PORT sheet at all, so there was never ground truth for it, and
+    # per the user PORT-PORT must carry the same CMDT Seq (and commodity
+    # code) as RATES. It's left alone here and stamped once the group's
+    # final number exists - see sequencing.sync_port_port_cmdt_seq().
     data["commodity_note"] = None
+    data["source_group"] = row.commodity_group_description
     out: list[RatesPortPortRow] = []
     for o_code in origin_codes:
         for d_code in dest_codes:

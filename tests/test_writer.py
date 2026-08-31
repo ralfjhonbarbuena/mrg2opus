@@ -14,6 +14,7 @@ from mrg2opus.excel_io.writer import write_opus_workbook_multi
 from mrg2opus.schema.opus_rows import (
     ArbsRow,
     CmdtNoteRow,
+    FreetimeRow,
     OpusRowSet,
     RatesPortPortRow,
     RatesRow,
@@ -73,3 +74,26 @@ def test_vertical_rates_written_as_one_sheet():
         wb = openpyxl.load_workbook(out)
         assert [s for s in wb.sheetnames if "VERTICAL" in s] == ["VERTICAL RATES"]
         assert wb["VERTICAL RATES"].max_row == 7  # 2 header rows + 5
+
+
+def test_freetime_sheet_leaves_out_the_columns_opus_assigns_itself():
+    """The reference FREETIME sheets are 46 columns wide because they're
+    DOWNLOADS of live filings; an upload must not send OPUS's own
+    identifiers back to it, so "RFA No.", "Status" and everything from
+    column AO ("DAR No.") rightwards are dropped (user direction,
+    2026-08-31). The values still live on FreetimeRow - only the sheet
+    gets narrower."""
+    row = FreetimeRow(seq="1", rfa_no="SINN02654A", status="Approved", tariff="CTIC", dar_no="X")
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "o.xlsx"
+        write_opus_workbook_multi({"": OpusRowSet(freetime=[row])}, out)
+        ws = openpyxl.load_workbook(out)["FREETIME"]
+
+    assert ws.max_column == 38
+    header = [ws.cell(row=1, column=c).value for c in range(1, 39)]
+    assert "RFA No." not in header and "Status" not in header
+    assert "DAR No." not in header and "Approval No." not in header
+    # Seq. still leads, and Tariff has slid left into what was column D.
+    assert header[0] == "Seq."
+    assert header[1] == "Tariff"
+    assert ws.cell(row=3, column=2).value == "CTIC"

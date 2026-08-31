@@ -112,7 +112,7 @@ def _read_freetime_rows(path) -> list[dict]:
         values = [ws.cell(row=r, column=c).value for c in range(1, 47)]
         if all(v is None for v in values):
             continue
-        rows.append(dict(zip(cols.FREETIME_ROW_FIELDS, values)))
+        rows.append(dict(zip(cols.FREETIME_FULL_ROW_FIELDS, values)))
     return rows
 
 
@@ -130,6 +130,6 @@ def test_laec_lux_freetime_matches_ground_truth(raw_path, opus_path, rfa_eff, rf
 
     assert len(generated) == len(expected) == 8
     for i, (g, e) in enumerate(zip(generated, expected)):
-        for field_name in cols.FREETIME_ROW_FIELDS:
+        for field_name in cols.FREETIME_FULL_ROW_FIELDS:
             gv, ev = _norm(g.get(field_name)), _norm(e.get(field_name))
             assert gv == ev, f"row {i} {field_name}: {gv!r} != {ev!r}"
