@@ -74,30 +74,27 @@ def test_lawc_route_note_text_matches_reference_rates_sheet():
 
 
 def test_lawc_route_notes_rn_sheet_content_matches_reference():
-    """The derived RN sheet's note-text counts, for every category this
-    task actually built (OOG's OH/OW/OWOH/KCI combinations, and NOR's own
-    DG-duplicate rows filed as D/DG with "REEFER DRY AS DANGEROUS" per the
-    user's 2026-08-26 clarification - see SEA_DG_ROUTE_NOTE's docstring),
-    exactly match the real RN sheet - ignoring header_seq/route_seq/
-    note_seq (writer-assigned placeholders, not reproductions of any real
-    OPUS-assigned number, see _derive_route_notes' docstring).
+    """The derived RN sheet's note-text counts match the real RN sheet
+    exactly, for every category - ignoring header_seq/route_seq/note_seq,
+    which OPUS assigns itself (this file numbers its headers from 1015).
 
-    HNSLO's MAR/MX2 counts are deliberately NOT checked here: this
-    specific reference file's ISC/SEA sheets have a real, pre-existing
-    HNSLO-detection gap unrelated to route notes (confirmed: MAR is short
-    190 vs 196, MX2 is entirely 0 vs 88, while every category actually
-    built in this task matches exactly) - the same "LAWC FAK/Tier 1
-    real-file fidelity" gap already flagged as a separate follow-up in
-    project-opus-note-sheet-taxonomy, not something this task touched."""
+    MAR and MX2 used to be excluded here: MX2 was 0 vs 88 and MAR 190 vs
+    196, blamed on an HNSLO-detection gap. It was really three truncated
+    row ranges - see DRY_SECTIONS' data_max_row/max_col notes - and with
+    those corrected every count agrees, so the whole sheet is asserted
+    rather than a hand-picked subset."""
     row_set = _run_lawc_fak()
     generated = Counter(r.contents for r in row_set.route_notes)
 
     ref_wb = openpyxl.load_workbook(OPUS_PATH, data_only=True, read_only=True)
     expected = Counter(r["contents"] for r in read_route_note_sheet(ref_wb, "RN") if r["contents"])
 
-    built_this_task = {k for k in set(generated) | set(expected) if "REEFER" in k or "KCI" in k or k in ("OH", "OWOH", "OW")}
-    assert built_this_task, "expected at least some of the categories this task built to actually be present"
-    mismatches = {k: (generated.get(k, 0), expected.get(k, 0)) for k in built_this_task if generated.get(k, 0) != expected.get(k, 0)}
+    assert expected, "expected the reference RN sheet to have some notes to compare against"
+    mismatches = {
+        k: (generated.get(k, 0), expected.get(k, 0))
+        for k in set(generated) | set(expected)
+        if generated.get(k, 0) != expected.get(k, 0)
+    }
     assert not mismatches, f"generated vs expected counts differ: {mismatches}"
 
 
@@ -128,3 +125,45 @@ def test_every_rn_row_points_at_a_rates_row_that_carries_the_note():
 
     # ...and the reverse: nothing on RATES is left without its RN row.
     assert len(row_set.route_notes) == sum(1 for r in row_set.rates if r.route_note)
+
+
+def test_san_lorenzo_rows_are_filed_for_every_dry_sheet():
+    """HNSLO (San Lorenzo, via NICIO by truck) is the LAST destination
+    block on all three dry sheets, which is what made it the casualty of
+    every truncated range: ISC and SEA stopped at column 68, one short of
+    HNSLO's 69-71, so neither filed a single San Lorenzo rate, and all
+    three stopped a row or more above their last rated origin.
+
+    Counts are per (origin, o_via) against this file's own RATES sheet,
+    so the origin ranges are pinned too - not just that HNSLO appears.
+    """
+    row_set = _run_lawc_fak()
+    ref_wb = openpyxl.load_workbook(OPUS_PATH, data_only=True, read_only=True)
+    expected_rows = [
+        r for r in read_rates_sheet(ref_wb, "RATES")
+        if r.get("destination_code") == "HNSLO" and r.get("cgo_type") == "DR"
+    ]
+    assert expected_rows, "expected the reference RATES sheet to file HNSLO at all"
+
+    # This lane's structural codes: MAIN G0001, ISC G0003, SEA G0004. The
+    # reference files MAIN/SEA/ISC as G0001/G0002/G0003 - commodity codes
+    # are a user override, not a derivable default (see the _NOR_PREFIX
+    # note above), so the two are mapped rather than compared.
+    for ref_code, our_code in (("G0001", "G0001"), ("G0002", "G0004"), ("G0003", "G0003")):
+        expected = Counter(
+            (r["origin_code"], r.get("o_via_code"))
+            for r in expected_rows if r.get("commodity_group_code") == ref_code
+        )
+        generated = Counter(
+            (r.origin_code, r.o_via_code) for r in row_set.rates
+            if r.destination_code == "HNSLO" and r.cgo_type == "DR" and r.commodity_group_code == our_code
+        )
+        assert generated == expected, (
+            f"{our_code}: missing {sorted(set(expected) - set(generated))[:5]}, "
+            f"extra {sorted(set(generated) - set(expected))[:5]}"
+        )
+
+    # Every one routes via Corinto on a truck, and none is a direct call.
+    hnslo = [r for r in row_set.rates if r.destination_code == "HNSLO"]
+    assert {r.d_via_code for r in hnslo} == {"NICIO"}
+    assert {r.destination_transmode for r in hnslo} == {"Truck"}

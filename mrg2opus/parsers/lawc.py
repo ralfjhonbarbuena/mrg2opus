@@ -259,20 +259,32 @@ class DrySectionConfig:
 # sequence against MAIN/SEA/ISC/OOG_CHARGE_CODES) - not raw sheet-tab
 # order. cmdt_notes are built per-commodity in this list's iteration
 # order, so DRY_SECTIONS must follow it too.
-# max_col=68, not 66: HNSLO is the last destination block on both ISC and
-# SEA sheets and needs its full 3-column (20'/40'/HCD) width - a max_col of
-# 66 silently truncated it to just the 20' column, discarding 40'/40HC
-# rates for that one destination (confirmed by comparing raw cells against
-# ground truth's HNSLO rows).
+# max_col=71 on ISC/SEA: HNSLO is the last destination block on both, at
+# columns 69-71, and needs its full 3-column (20'/40'/HCD) width. This was
+# 66, then 68 on the reading that 68 reached HNSLO's 40'/HCD - it doesn't;
+# 66-68 is Corinto (NICIO), and 68 stopped one column short of HNSLO
+# starting. That silently dropped every San Lorenzo rate on both sheets
+# (43 origins, 172 filed rows once DG duplicates are counted), which is
+# the "MX2 is entirely 0 vs 88" gap the RN tests flagged. Both sheets end
+# at column 71, so nothing else is pulled in by the widening.
+# data_max_row 24/38/110, not 23/37/107: all three sheets stopped short of
+# their last rated origins - PKKHI on ISC (row 24), NZNPE on SEA (row 38),
+# and MAIN's last three rail routings (rows 108-110: CNGAN via XMN, CNKHN
+# via SHK, CNKHN via XMN). Every one is fully rated across all destination
+# columns and filed in the ground truth, and they were dropped entirely,
+# for every destination, not just HNSLO. The ranges end exactly there
+# rather than at the end of each sheet because what follows carries no
+# rates at all - SEA's six JP origins are label-only, and MAIN's row 124
+# starts an unrelated weight-band table.
 DRY_SECTIONS = [
     DrySectionConfig(
-        RAW_SHEET_ISC, 2, None, 6, 7, 8, 23, 3, 68, 2, 3, 4, COMMODITY_ISC, ISC_CHARGE_CODES
+        RAW_SHEET_ISC, 2, None, 6, 7, 8, 24, 3, 71, 2, 3, 4, COMMODITY_ISC, ISC_CHARGE_CODES
     ),
     DrySectionConfig(
-        RAW_SHEET_SEA, 2, None, 8, 9, 10, 37, 3, 68, 4, 3, 4, COMMODITY_SEA, SEA_CHARGE_CODES
+        RAW_SHEET_SEA, 2, None, 8, 9, 10, 38, 3, 71, 4, 3, 4, COMMODITY_SEA, SEA_CHARGE_CODES
     ),
     DrySectionConfig(
-        RAW_SHEET_MAIN, 3, 2, 8, 9, 10, 107, 4, 84, 4, 4, 5, COMMODITY_MAIN, MAIN_CHARGE_CODES
+        RAW_SHEET_MAIN, 3, 2, 8, 9, 10, 110, 4, 84, 4, 4, 5, COMMODITY_MAIN, MAIN_CHARGE_CODES
     ),
 ]
 
