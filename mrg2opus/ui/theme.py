@@ -241,5 +241,9 @@ def appearance_hint() -> str:
     config.toml), and there's no API to flip it from Python - so the app
     points at it rather than duplicating it with a control that could
     disagree with the real setting.
+
+    Streamlit 1.62 puts System/Light/Dark at the TOP of the ⋮ menu, not
+    under Settings → Appearance as older versions did - verified in the
+    running app, so don't "correct" this back without looking.
     """
-    return "Light or dark: **⋮ → Settings → Appearance**."
+    return "Theme: **⋮ menu → System / Light / Dark**."
