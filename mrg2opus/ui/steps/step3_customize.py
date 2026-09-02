@@ -10,6 +10,27 @@ from mrg2opus.ui.parsing import run_parser
 from mrg2opus.ui.sheets import output_sheets
 from mrg2opus.ui.state import WizardState
 
+_EDITOR_KEY = "commodity_overrides_editor"
+
+
+def _refresh_editor() -> None:
+    """Throw away the grid's in-progress edits so it redraws from the last
+    applied values.
+
+    Mainly there for a cleared cell: empty a CMDT Description and the grid
+    just shows a blank, with nothing to say what will actually be filed
+    (the CMDT Seq column at least prints its own "None"). Nothing is
+    silently lost either way - a blank description falls back to the
+    group's default on Apply - but Refresh puts the default back on screen
+    so it can be read.
+
+    Runs as a button CALLBACK, which is what makes popping the key legal:
+    callbacks fire before the next run builds its widgets, so the editor
+    is recreated from scratch rather than having its key yanked out from
+    under a live widget.
+    """
+    st.session_state.pop(_EDITOR_KEY, None)
+
 
 def render(state: WizardState) -> None:
     st.subheader("Customize")
@@ -84,6 +105,14 @@ def render(state: WizardState) -> None:
         paired = sorted(zip(editor_rows, row_keys), key=lambda pair: pair[0]["order"])
         editor_rows = [row for row, _key in paired]
         row_keys = [key for _row, key in paired]
+        st.button(
+            "↺ Refresh table",
+            on_click=_refresh_editor,
+            help=(
+                "Redraw the table from the last applied values - use it if you've cleared a cell and want "
+                "to see its default again. Discards any edits made since you last hit Apply."
+            ),
+        )
         edited = st.data_editor(
             editor_rows,
             hide_index=True,
@@ -115,7 +144,7 @@ def render(state: WizardState) -> None:
                     help="Keep the group, but don't file a D/DG duplicate of its base Dry rows.",
                 ),
             },
-            key="commodity_overrides_editor",
+            key=_EDITOR_KEY,
         )
     else:
         edited, row_keys = [], []
