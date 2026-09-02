@@ -38,8 +38,8 @@ from mrg2opus.parsers import (  # noqa: F401
 )
 from mrg2opus.ui import compare_page
 from mrg2opus.ui.state import get_state
-from mrg2opus.ui.theme import appearance_hint, apply_theme
 from mrg2opus.ui.steps import step1_upload, step2_preview, step3_customize, step4_export
+from mrg2opus.ui.theme import apply_theme
 
 STEP_LABELS = {
     1: "1. Upload & Classify",
@@ -61,11 +61,10 @@ def main() -> None:
     apply_theme()  # must follow set_page_config; see ui/theme.py
     st.title("MRG → OPUS Converter")
 
-    col_mode, col_appearance = st.columns([3, 2])
-    with col_mode:
-        mode = st.radio("Mode", options=["Convert", "Compare"], horizontal=True)
-    with col_appearance:
-        st.caption(appearance_hint())
+    # The two options name themselves, so the "Mode" label is noise.
+    mode = st.radio(
+        "Mode", options=["Convert", "Compare"], horizontal=True, label_visibility="collapsed"
+    )
     st.divider()
 
     if mode == "Compare":
@@ -74,21 +73,28 @@ def main() -> None:
 
     state = get_state()
 
+    # Every step is a button of the same size, the current one filled.
+    # It used to render the current step as markdown text among real
+    # buttons, which left the row visibly uneven; a text tick is used for
+    # "done" rather than an emoji, so all four labels share one typeface
+    # and sit on one baseline.
     cols = st.columns(len(STEP_LABELS))
     for col, (step_num, label) in zip(cols, STEP_LABELS.items()):
         with col:
-            if step_num == state.step:
-                st.markdown(f"**➤ {label}**")
-            else:
-                prefix = "✅ " if step_num < state.step else ""
-                # Every step's own render() already checks its prerequisites
-                # (state.workbook/row_sets) and shows a "go back" prompt if
-                # they're missing, so jumping directly to any step - not
-                # just completed ones - degrades gracefully rather than
-                # erroring.
-                if st.button(f"{prefix}{label}", key=f"step_nav_{step_num}", width="stretch"):
-                    state.step = step_num
-                    st.rerun()
+            prefix = "✓ " if step_num < state.step else ""
+            # Every step's own render() already checks its prerequisites
+            # (state.workbook/row_sets) and shows a "go back" prompt if
+            # they're missing, so jumping directly to any step - not
+            # just completed ones - degrades gracefully rather than
+            # erroring.
+            if st.button(
+                f"{prefix}{label}",
+                key=f"step_nav_{step_num}",
+                width="stretch",
+                type="primary" if step_num == state.step else "secondary",
+            ):
+                state.step = step_num
+                st.rerun()
     st.divider()
 
     STEP_RENDERERS[state.step](state)

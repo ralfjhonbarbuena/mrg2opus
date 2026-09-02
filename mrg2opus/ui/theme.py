@@ -50,8 +50,15 @@ PETROL = "#004D6C"  # structural blue: headings on light, panels on dark
 INK = "#002636"  # deepest navy: text on light, the ground on dark
 ORANGE = "#F99D21"  # sparing highlight accent
 TEXT_DARK = "#E5E5E5"
-MUTED = "#999999"
 WHITE = "#FFFFFF"
+
+# Captions need a different neutral per mode, and ONE's palette happens to
+# carry one for each: neither works on both grounds. #666666 scores 5.74:1
+# on white but only 2.75:1 on the ink ground; #999999 is the mirror image
+# at 2.85:1 and 5.54:1. Using one for both is what made light-mode caption
+# text hard to read - it was #999999 everywhere, under the 4.5:1 floor.
+MUTED_LIGHT = "#666666"
+MUTED_DARK = "#999999"
 
 # --- The two derived tints, required by contrast on the dark ground ---------
 # MAGENTA lightened 35% toward white: 4.59:1 on INK, clears AA for text.
@@ -93,6 +100,7 @@ def _css(dark: bool) -> str:
     # dark mode lightens instead - the same gesture, inverted.
     link_hover = WHITE if dark else PLUM
     focus_ring = "rgba(212, 99, 163, 0.45)" if dark else "rgba(189, 15, 114, 0.35)"
+    muted = MUTED_DARK if dark else MUTED_LIGHT
 
     return f"""
 <style>
@@ -103,7 +111,7 @@ def _css(dark: bool) -> str:
     --one-heading: {heading};
     --one-orange: {ORANGE};
     --one-petrol: {PETROL};
-    --one-muted: {MUTED};
+    --one-muted: {muted};
   }}
 
   /* Form elements don't inherit font, so they're named explicitly; the
@@ -143,11 +151,24 @@ def _css(dark: bool) -> str:
   a:hover {{ color: {link_hover} !important; text-decoration: underline; }}
 
   /* Buttons. Streamlit renders primary/secondary via kind=, which is
-     stabler across versions than the generated class names. */
+     stabler across versions than the generated class names. One height
+     and one shape for all of them, so a row lines up however long the
+     labels are - the step nav looked ragged because it mixed plain
+     markdown text in among real buttons. */
   .stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {{
     font-weight: 700;
     text-transform: uppercase;
     transition: 0.25s;
+    min-height: 2.75rem;
+    white-space: nowrap;
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }}
+  /* Labels are trusted to fit; if one ever doesn't, it ellipsises rather
+     than reflowing the row. */
+  .stButton > button p, .stDownloadButton > button p {{
+    overflow: hidden;
+    text-overflow: ellipsis;
   }}
   .stButton > button[kind="primary"],
   .stDownloadButton > button[kind="primary"],
@@ -232,18 +253,3 @@ def _css(dark: bool) -> str:
 def apply_theme() -> None:
     """Inject the house styling. Call once, right after set_page_config()."""
     st.markdown(_css(_is_dark()), unsafe_allow_html=True)
-
-
-def appearance_hint() -> str:
-    """Where the light/dark switch lives, for a caption in the UI.
-
-    Streamlit owns the toggle (both palettes are declared in
-    config.toml), and there's no API to flip it from Python - so the app
-    points at it rather than duplicating it with a control that could
-    disagree with the real setting.
-
-    Streamlit 1.62 puts System/Light/Dark at the TOP of the ⋮ menu, not
-    under Settings → Appearance as older versions did - verified in the
-    running app, so don't "correct" this back without looking.
-    """
-    return "Theme: **⋮ menu → System / Light / Dark**."
