@@ -289,10 +289,10 @@ def test_lawc_freetime_matches_ground_truth(raw_path, opus_path):
         values = [ws.cell(row=r, column=c).value for c in range(1, 47)]
         if all(v is None for v in values):
             continue
-        expected.append(dict(zip(cols.FREETIME_FULL_ROW_FIELDS, values)))
+        expected.append(dict(zip(cols.FREETIME_ROW_FIELDS, values)))
 
     assert len(generated) == len(expected)
     for i, (g, e) in enumerate(zip(generated, expected)):
-        for field_name in cols.FREETIME_FULL_ROW_FIELDS:
+        for field_name in cols.FREETIME_ROW_FIELDS:
             gv, ev = _norm(g.get(field_name)), _norm(e.get(field_name))
             assert gv == ev, f"row {i} {field_name}: {gv!r} != {ev!r}"

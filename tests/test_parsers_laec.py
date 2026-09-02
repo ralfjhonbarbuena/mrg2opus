@@ -142,7 +142,7 @@ def _read_freetime_rows(path) -> list[dict]:
         values = [ws.cell(row=r, column=c).value for c in range(1, 47)]
         if all(v is None for v in values):
             continue
-        rows.append(dict(zip(cols.FREETIME_FULL_ROW_FIELDS, values)))
+        rows.append(dict(zip(cols.FREETIME_ROW_FIELDS, values)))
     return rows
 
 
@@ -178,7 +178,7 @@ def test_laec_freetime_matches_ground_truth(raw_path, opus_path):
 
     assert len(generated) == len(expected)
     for i, (g, e) in enumerate(zip(generated, expected)):
-        for field_name in cols.FREETIME_FULL_ROW_FIELDS:
+        for field_name in cols.FREETIME_ROW_FIELDS:
             gv, ev = _norm(g.get(field_name)), _norm(e.get(field_name))
             assert gv == ev, f"row {i} {field_name}: {gv!r} != {ev!r}"
 
@@ -203,9 +203,9 @@ def test_laec_tier1_freetime_matches_ground_truth_by_content():
 
     wb = openpyxl.load_workbook(raw_path, data_only=True)
     row_set = LAECParser().run(wb, MappingProfile())
-    generated = [tuple(_norm(r.model_dump().get(f)) for f in cols.FREETIME_FULL_ROW_FIELDS) for r in row_set.freetime]
+    generated = [tuple(_norm(r.model_dump().get(f)) for f in cols.FREETIME_ROW_FIELDS) for r in row_set.freetime]
     expected_rows = _read_freetime_rows(opus_path)
-    expected = [tuple(_norm(e.get(f)) for f in cols.FREETIME_FULL_ROW_FIELDS) for e in expected_rows]
+    expected = [tuple(_norm(e.get(f)) for f in cols.FREETIME_ROW_FIELDS) for e in expected_rows]
 
     from collections import Counter
 

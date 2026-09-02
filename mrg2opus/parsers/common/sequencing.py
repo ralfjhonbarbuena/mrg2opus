@@ -20,9 +20,10 @@ in existing row order).
 """
 from __future__ import annotations
 
+import re
 from typing import Hashable, TypeVar
 
-from mrg2opus.schema.opus_rows import CmdtNoteRow, OpusRowSet, RatesPortPortRow, RatesRow
+from mrg2opus.schema.opus_rows import CmdtNoteRow, OpusRowSet, RatesPortPortRow, RatesRow, RouteNoteRow
 
 _K = TypeVar("_K", bound=Hashable)
 
@@ -123,6 +124,42 @@ def collapse_note_block_sequences(notes: list[CmdtNoteRow]) -> None:
             note.note_seq = None
 
 
+# The service lane a ROUTE NOTE names, e.g. "...Vessel Service Lane: MX2"
+# -> "MX2". \S+ stops at the first space, which is what drops LAWC's
+# "KCI (OH)" / "KCI (OW)" gauge suffixes - ground truth files those under
+# a bare "KCI".
+_SERVICE_LANE_RE = re.compile(r"Vessel Service Lane:\s*(\S+)", re.IGNORECASE)
+
+
+def service_lane_from_note(contents: str | None) -> str | None:
+    """The 3-character vessel service lane code a route note names, or None
+    when it names none."""
+    if not contents:
+        return None
+    m = _SERVICE_LANE_RE.search(contents)
+    return m.group(1) if m else None
+
+
+def fill_route_note_lanes(route_notes: list[RouteNoteRow]) -> None:
+    """Populate each ROUTE NOTE row's own `Lane` column from the service
+    lane its Contents names (user-reported, 2026-08-31: the column came
+    out empty on every lane).
+
+    Every parser put the code in the note TEXT only, leaving the dedicated
+    column - which is what OPUS actually reads the lane off - blank. The
+    rule is the same in every ground truth checked: the column carries the
+    code exactly when the note names one, and stays blank otherwise
+    (LAWC's bare "OH"/"OW"/"REEFER DRY AS DANGEROUS" notes, and TAD's
+    transhipment-port notes). Confirmed against LAWC's RN (MAR 196, MX2
+    88, AX3 30, KCI 36) and both TAD ROUTE NOTE files (IOM/AEX/MD1, FE3),
+    including the combined "T/S port | service lane" and "REEFER DRY AS
+    DANGEROUS | ...Lane: AX3" texts, which take the lane from their
+    service-lane half. An explicitly-set lane is never overwritten."""
+    for note in route_notes:
+        if note.lane is None:
+            note.lane = service_lane_from_note(note.contents)
+
+
 def finalize_sequences(row_set: OpusRowSet) -> None:
     """Every cross-sheet sequencing fixup that can only run once a lane has
     finished building, applied in place. Lives here rather than in each
@@ -131,3 +168,4 @@ def finalize_sequences(row_set: OpusRowSet) -> None:
     sync_port_port_cmdt_seq(row_set.rates, row_set.rates_port_port)
     collapse_note_block_sequences(row_set.cmdt_notes)
     collapse_note_block_sequences(row_set.special_notes)
+    fill_route_note_lanes(row_set.route_notes)

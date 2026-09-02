@@ -80,7 +80,13 @@ def _write_freetime_sheet(wb: Workbook, sheet_name: str, rows: list[FreetimeRow]
     ws.append([f or "" for f in cols.FREETIME_HEADER_FIELD])
     for row in rows:
         data = row.model_dump()
-        ws.append([data[field_name] for field_name in cols.FREETIME_ROW_FIELDS])
+        # Blank, not absent: the header keeps its full width and each
+        # remaining value stays under its own column - see
+        # opus_columns.FREETIME_UNFILED_FIELDS.
+        ws.append([
+            None if field_name in cols.FREETIME_UNFILED_FIELDS else data[field_name]
+            for field_name in cols.FREETIME_ROW_FIELDS
+        ])
 
 
 def _sheet_names_for_suffix(suffix: str) -> dict[str, str]:

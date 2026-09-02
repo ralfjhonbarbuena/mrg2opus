@@ -182,13 +182,14 @@ RN_ROW_FIELDS = [
 # parsers/common/freetime.py for the concrete per-lane tables.
 #
 # We generate an UPLOAD, not a download, so the columns OPUS assigns on its
-# own side are dropped on the way out (user direction, 2026-08-31): "RFA
-# No.", "Status", and everything from column AO ("DAR No.") rightwards.
-# They're kept on FreetimeRow, and in the FREETIME_FULL_* lists here,
-# because every reference/2_OPUS FREETIME sheet still carries all 46 -
-# that's the shape the ground-truth tests read back. FREETIME_* (no
-# FULL) is the narrower shape the writer actually emits.
-FREETIME_FULL_HEADER_GROUP = [
+# own side come out EMPTY (user direction, 2026-08-31): "RFA No.",
+# "Status", and everything from column AO ("DAR No.") rightwards. The
+# header keeps all 46 columns - dropping them outright shifted every
+# header left of where its data sat, which is not what was asked for; it's
+# the generated VALUES that must be left blank, in place. The values stay
+# on FreetimeRow because the reference files carry them and the
+# ground-truth tests read them back.
+FREETIME_HEADER_GROUP = [
     "Seq.", "RFA No.", "Status", "Tariff", "EFF DT", "EXP DT", "CNTR/Cargo", "IMDG\nClass", "PSA Grp.",
     "Coverage", "Coverage", "Coverage", "Free Time", "Free Time", "Free Time",
     "F/Time EXCL", "F/Time EXCL", "F/Time EXCL",
@@ -199,14 +200,14 @@ FREETIME_FULL_HEADER_GROUP = [
     "CNTR Q'TY", "CNTR Q'TY", "Tiered\n Free\n Time", "Remark",
     "DAR No.", "Ver.", "Approval No.", "Proposal No.", "Customer", "Customer",
 ]
-FREETIME_FULL_HEADER_FIELD = [
+FREETIME_HEADER_FIELD = [
     None, None, None, None, None, None, None, None, None,
     "CN", "RGN", "LOC", "Tier", "Add", "Total", "SAT", "SUN", "H/day",
     "CT", "CN", "RGN", "LOC", "CN", "RGN", "LOC", "Code", "Name", "Code", "Name", None,
     "From", "Up to", "20 FT", "40 FT", "H/C", "45 FT",
     "From", "Up to", None, None, None, None, None, None, "Code", "Name",
 ]
-FREETIME_FULL_ROW_FIELDS = [
+FREETIME_ROW_FIELDS = [
     "seq", "rfa_no", "status", "tariff", "eff_dt", "exp_dt", "cntr_cargo", "imdg_class", "psa_grp",
     "coverage_cn", "coverage_rgn", "coverage_loc", "free_time_tier", "free_time_add", "free_time_total",
     "ftime_excl_sat", "ftime_excl_sun", "ftime_excl_hday",
@@ -225,11 +226,6 @@ FREETIME_UNFILED_FIELDS = frozenset({
     "rfa_no", "status",
     "dar_no", "ver", "approval_no", "proposal_no", "customer_code", "customer_name",
 })
-
-_FREETIME_KEPT = [i for i, f in enumerate(FREETIME_FULL_ROW_FIELDS) if f not in FREETIME_UNFILED_FIELDS]
-FREETIME_HEADER_GROUP = [FREETIME_FULL_HEADER_GROUP[i] for i in _FREETIME_KEPT]
-FREETIME_HEADER_FIELD = [FREETIME_FULL_HEADER_FIELD[i] for i in _FREETIME_KEPT]
-FREETIME_ROW_FIELDS = [FREETIME_FULL_ROW_FIELDS[i] for i in _FREETIME_KEPT]
 
 # --- Legacy bundled-sample sheet names ---------------------------------------
 # These match the literal sheet names inside the older, hand-prepared

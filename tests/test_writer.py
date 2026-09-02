@@ -76,24 +76,30 @@ def test_vertical_rates_written_as_one_sheet():
         assert wb["VERTICAL RATES"].max_row == 7  # 2 header rows + 5
 
 
-def test_freetime_sheet_leaves_out_the_columns_opus_assigns_itself():
+def test_freetime_sheet_blanks_the_columns_opus_assigns_itself():
     """The reference FREETIME sheets are 46 columns wide because they're
     DOWNLOADS of live filings; an upload must not send OPUS's own
     identifiers back to it, so "RFA No.", "Status" and everything from
-    column AO ("DAR No.") rightwards are dropped (user direction,
-    2026-08-31). The values still live on FreetimeRow - only the sheet
-    gets narrower."""
+    column AO ("DAR No.") rightwards come out EMPTY (user direction,
+    2026-08-31). The header keeps all 46 columns and every other value
+    stays under its own heading - deleting the columns outright shifted
+    the header away from the data."""
     row = FreetimeRow(seq="1", rfa_no="SINN02654A", status="Approved", tariff="CTIC", dar_no="X")
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "o.xlsx"
         write_opus_workbook_multi({"": OpusRowSet(freetime=[row])}, out)
         ws = openpyxl.load_workbook(out)["FREETIME"]
 
-    assert ws.max_column == 38
-    header = [ws.cell(row=1, column=c).value for c in range(1, 39)]
-    assert "RFA No." not in header and "Status" not in header
-    assert "DAR No." not in header and "Approval No." not in header
-    # Seq. still leads, and Tariff has slid left into what was column D.
-    assert header[0] == "Seq."
-    assert header[1] == "Tariff"
-    assert ws.cell(row=3, column=2).value == "CTIC"
+    assert ws.max_column == 46
+    header = [ws.cell(row=1, column=c).value for c in range(1, 47)]
+    assert header[1] == "RFA No." and header[2] == "Status"
+    assert header[40] == "DAR No." and header[45] == "Customer"
+
+    values = {header[c - 1]: ws.cell(row=3, column=c).value for c in range(1, 47)}
+    assert values["RFA No."] is None
+    assert values["Status"] is None
+    assert values["DAR No."] is None
+    # Everything else still lines up with its own column.
+    assert values["Seq."] == 1  # FreetimeRow coerces seq to int
+    assert values["Tariff"] == "CTIC"
+    assert ws.cell(row=3, column=4).value == "CTIC"  # Tariff is still column D

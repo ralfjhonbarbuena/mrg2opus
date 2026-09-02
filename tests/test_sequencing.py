@@ -9,13 +9,16 @@ from __future__ import annotations
 
 from mrg2opus.parsers.common.sequencing import (
     collapse_note_block_sequences,
+    fill_route_note_lanes,
     finalize_sequences,
+    service_lane_from_note,
     sync_port_port_cmdt_seq,
 )
 from mrg2opus.schema.opus_rows import (
     CmdtNoteRow,
     OpusRowSet,
     RatesRow,
+    RouteNoteRow,
     SpecialNoteRow,
     explode_rates_row,
 )
@@ -137,3 +140,49 @@ def test_finalize_sequences_covers_cmdt_and_special_notes_and_port_port():
     assert [r.cmdt_seq for r in row_set.rates_port_port] == [1, 1]
     assert [n.header_seq for n in row_set.cmdt_notes] == [1, None]
     assert [n.note_seq for n in row_set.special_notes] == [1, None]
+
+
+def test_service_lane_is_read_out_of_the_note_text():
+    assert service_lane_from_note("Rates are applicable for Vessel Service Lane: MX2") == "MX2"
+    # A combined note takes the lane from its service-lane half.
+    assert service_lane_from_note(
+        "Rates are Subject to Transhipment Port: INMUN | Rates are applicable for Vessel Service Lane: IOM"
+    ) == "IOM"
+    assert service_lane_from_note(
+        "REEFER DRY AS DANGEROUS | Rates are applicable for Vessel Service Lane: AX3"
+    ) == "AX3"
+
+
+def test_gauge_suffix_is_not_part_of_the_lane_code():
+    """LAWC files "...Lane: KCI (OH)" under a bare "KCI"."""
+    assert service_lane_from_note("Rates are applicable for Vessel Service Lane: KCI (OH)") == "KCI"
+    assert service_lane_from_note("Rates are applicable for Vessel Service Lane: KCI (OWOH)") == "KCI"
+
+
+def test_a_note_naming_no_service_lane_leaves_the_column_blank():
+    assert service_lane_from_note("Rates are Subject to Transhipment Port: SGSIN") is None
+    assert service_lane_from_note("REEFER DRY AS DANGEROUS") is None
+    assert service_lane_from_note("OWOH") is None
+    assert service_lane_from_note(None) is None
+
+
+def test_fill_route_note_lanes_populates_the_column_and_keeps_explicit_values():
+    notes = [
+        RouteNoteRow(contents="Rates are applicable for Vessel Service Lane: MAR"),
+        RouteNoteRow(contents="OH"),
+        RouteNoteRow(contents="Rates are applicable for Vessel Service Lane: MX2", lane="SET"),
+    ]
+
+    fill_route_note_lanes(notes)
+
+    assert [n.lane for n in notes] == ["MAR", None, "SET"]
+
+
+def test_finalize_sequences_fills_route_note_lanes_too():
+    row_set = OpusRowSet(
+        route_notes=[RouteNoteRow(contents="Rates are applicable for Vessel Service Lane: AX3")]
+    )
+
+    finalize_sequences(row_set)
+
+    assert row_set.route_notes[0].lane == "AX3"
