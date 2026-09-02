@@ -20,24 +20,37 @@ STRUCTURE (headings, chrome), orange is a sparing highlight. Deliberately
 no logo, wordmark or ship imagery - palette and type only, per request.
 
 LIGHT AND DARK. Both are real Streamlit themes declared in
-.streamlit/config.toml, so the built-in appearance switch toggles the
-whole app - backgrounds, text, links, borders. ONE's own site is light,
-so light mode is close to a transcription; dark mode needs translating.
-Two of their colours are already dark and do that work, which is why the
-dark app isn't built on invented greys: INK (#002636) is the page ground
-and PETROL (#004D6C) the raised panel. What can't survive the flip is
-anything used as TEXT - petrol as heading text scores 1.71:1 on the ink
-ground and magenta as link text 2.61:1, both under the 4.5:1 AA floor -
-so each gets a lightened tint, computed rather than eyeballed. Those two
-tints are the only colours here that aren't ONE's verbatim. The true
-magenta is kept where it matters most, as the FILL of primary buttons,
-where white-on-magenta scores 6.04:1 in either mode.
-Measured on the ink ground: text 12.53:1, headings 10.11:1, links
-4.59:1. On white: text 15.9:1, headings 8.6:1, links 6.04:1.
+.streamlit/config.toml, so the built-in switch toggles the whole app.
+ONE's own site is light, so light mode is close to a transcription; dark
+mode needs translating. Two of their colours are already dark and do that
+work, which is why the dark app isn't built on invented greys: INK
+(#002636) is the page ground and PETROL (#004D6C) the raised panel. What
+can't survive the flip is anything used as TEXT - petrol as heading text
+scores 1.71:1 on the ink ground and magenta as link text 2.61:1, both
+under the 4.5:1 AA floor - so each gets a lightened tint, computed rather
+than eyeballed. Those tints, plus a second muted grey, are the only
+values here that aren't ONE's verbatim. The true magenta is kept where it
+matters most, as the FILL of primary buttons, where white on it scores
+6.04:1 either way.
+Measured in the running app - light: text 15.78:1, headings 9.22:1,
+captions 5.74:1, links 6.04:1. Dark: text 12.53:1, headings 10.11:1,
+captions 5.54:1, links 4.59:1.
 
-This module only covers what config.toml can't express - uppercase
-headings and buttons, the magenta title rule, and the "you can edit
-this" marking. Keep the two in step.
+HOW THE MODE IS DETECTED, and why not in Python. This used to branch on
+st.context.theme.type and bake one mode's colours into each run. That is
+broken rather than merely stale: switching theme from the toolbar menu is
+a CLIENT-side change that need not re-run the script at all, so the
+stylesheet kept whatever mode was current when the page last ran -
+observed live as a dark app still serving petrol #004D6C headings at
+1.71:1 on its own navy ground, with nothing to correct it.
+The mode is therefore resolved in CSS now. Streamlit sets `color-scheme`
+on its app container (verified: `dark` on [data-testid="stApp"] in dark
+mode), and CSS light-dark() resolves against exactly that - which is why
+the tokens below hang off that container rather than :root, where
+color-scheme is still `normal` and every one of them would resolve light
+whatever the theme. One stylesheet covers both modes, so there is nothing
+to re-run and no lag. See _FALLBACK_TOKENS for browsers without
+light-dark().
 """
 from __future__ import annotations
 
@@ -45,7 +58,7 @@ import streamlit as st
 
 # --- ONE's palette, verbatim ------------------------------------------------
 MAGENTA = "#BD0F72"  # primary: button fills, and links on light. THE ONE colour.
-PLUM = "#5D0035"  # magenta's dark partner: hover, light mode only
+PLUM = "#5D0035"  # magenta's dark partner: link/button hover on light
 PETROL = "#004D6C"  # structural blue: headings on light, panels on dark
 INK = "#002636"  # deepest navy: text on light, the ground on dark
 ORANGE = "#F99D21"  # sparing highlight accent
@@ -60,7 +73,7 @@ WHITE = "#FFFFFF"
 MUTED_LIGHT = "#666666"
 MUTED_DARK = "#999999"
 
-# --- The two derived tints, required by contrast on the dark ground ---------
+# --- The derived tints, required by contrast on the dark ground -------------
 # MAGENTA lightened 35% toward white: 4.59:1 on INK, clears AA for text.
 MAGENTA_TEXT_DARK = "#D463A3"
 # MAGENTA lightened 15%: a hover FILL that still holds white text (4.94:1).
@@ -72,46 +85,67 @@ PETROL_TEXT_DARK = "#BFD2DA"
 # back to Helvetica/Arial, so we do the same rather than ship a lookalike.
 FONT_STACK = "'Proxima Nova', ProximaNova, Helvetica, Arial, sans-serif"
 
-
-def _is_dark() -> bool:
-    """Whether the dark theme is active.
-
-    Streamlit documents st.context.theme.type as possibly stale for one
-    run right after a switch (and on a session's first load), so this is
-    used ONLY for the handful of accents that have no value working on
-    both grounds - heading colour and the two magenta text/hover tints.
-    Everything structural (backgrounds, body text, links, borders) comes
-    from config.toml's own [theme.light]/[theme.dark], which Streamlit
-    always gets right. A stale read is therefore a briefly off-tone
-    heading that corrects itself on the next interaction, never an
-    unreadable page.
-    """
-    try:
-        return st.context.theme.type == "dark"
-    except Exception:  # noqa: BLE001 - older/newer Streamlit, or no context
-        return False
-
-
-def _css(dark: bool) -> str:
-    heading = PETROL_TEXT_DARK if dark else PETROL
-    accent_text = MAGENTA_TEXT_DARK if dark else MAGENTA
-    hover_fill = MAGENTA_HOVER_DARK if dark else PLUM
+# (light, dark) per token - the whole mode-dependent palette, in one place.
+_MODE_TOKENS = {
+    "--one-heading": (PETROL, PETROL_TEXT_DARK),
+    "--one-accent-text": (MAGENTA, MAGENTA_TEXT_DARK),
+    "--one-hover-fill": (PLUM, MAGENTA_HOVER_DARK),
     # ONE darkens to plum on hover; on a navy ground that would vanish, so
     # dark mode lightens instead - the same gesture, inverted.
-    link_hover = WHITE if dark else PLUM
-    focus_ring = "rgba(212, 99, 163, 0.45)" if dark else "rgba(189, 15, 114, 0.35)"
-    muted = MUTED_DARK if dark else MUTED_LIGHT
+    "--one-link-hover": (PLUM, WHITE),
+    "--one-muted": (MUTED_LIGHT, MUTED_DARK),
+    "--one-focus-ring": ("rgba(189, 15, 114, 0.35)", "rgba(212, 99, 163, 0.45)"),
+}
 
+# Without light-dark(), each token above would substitute as nonsense and
+# take its whole declaration down with it - a missing border here, a
+# transparent hover fill there. These are the both-grounds-safe stand-ins:
+# `currentColor` inherits Streamlit's own (always correct) theme text
+# colour, so the page degrades to unbranded-but-readable rather than to
+# unreadable.
+_FALLBACK_TOKENS = {
+    "--one-heading": "currentColor",
+    "--one-accent-text": "currentColor",
+    "--one-hover-fill": MAGENTA,  # true magenta holds white text on either ground
+    "--one-link-hover": "currentColor",
+    "--one-muted": "#777777",  # 4.48:1 on white, 3.52:1 on ink - the best single value
+    "--one-focus-ring": "rgba(189, 15, 114, 0.4)",
+}
+
+
+def _token_block(indent: str) -> str:
+    return "\n".join(
+        f"{indent}{name}: light-dark({light}, {dark});"
+        for name, (light, dark) in _MODE_TOKENS.items()
+    )
+
+
+def _fallback_block(indent: str) -> str:
+    return "\n".join(f"{indent}{name}: {value};" for name, value in _FALLBACK_TOKENS.items())
+
+
+def _css() -> str:
     return f"""
 <style>
+  /* Mode-independent, so :root is fine for these. */
   :root {{
     --one-magenta: {MAGENTA};
-    --one-accent-text: {accent_text};
-    --one-hover-fill: {hover_fill};
-    --one-heading: {heading};
     --one-orange: {ORANGE};
     --one-petrol: {PETROL};
-    --one-muted: {muted};
+  }}
+
+  /* Mode-DEPENDENT tokens, resolved by CSS rather than by Python - see
+     this module's docstring for why. They must hang off the app
+     container because that is where Streamlit sets `color-scheme`, and
+     light-dark() reads exactly that; on :root it is still `normal`, and
+     all of these would resolve light whatever the theme. */
+  [data-testid="stApp"] {{
+{_token_block("    ")}
+  }}
+  @supports not (color: light-dark(#000000, #ffffff)) {{
+    [data-testid="stApp"] {{
+{_fallback_block("      ")}
+    }}
   }}
 
   /* Form elements don't inherit font, so they're named explicitly; the
@@ -148,7 +182,7 @@ def _css(dark: bool) -> str:
      using. Magenta holds up as a RULE on either ground. */
   h1 {{ border-bottom: 3px solid var(--one-magenta); padding-bottom: 0.3rem; }}
 
-  a:hover {{ color: {link_hover} !important; text-decoration: underline; }}
+  a:hover {{ color: var(--one-link-hover) !important; text-decoration: underline; }}
 
   /* Buttons. Streamlit renders primary/secondary via kind=, which is
      stabler across versions than the generated class names. One height
@@ -195,7 +229,7 @@ def _css(dark: bool) -> str:
     border-color: var(--one-magenta);
     color: {WHITE};
   }}
-  .stButton > button:focus:not(:active) {{ box-shadow: 0 0 0 2px {focus_ring}; }}
+  .stButton > button:focus:not(:active) {{ box-shadow: 0 0 0 2px var(--one-focus-ring); }}
 
   [data-testid="stProgress"] > div > div > div > div {{ background-color: var(--one-magenta) !important; }}
   .stTabs [aria-selected="true"] {{ color: var(--one-accent-text) !important; }}
@@ -251,5 +285,10 @@ def _css(dark: bool) -> str:
 
 
 def apply_theme() -> None:
-    """Inject the house styling. Call once, right after set_page_config()."""
-    st.markdown(_css(_is_dark()), unsafe_allow_html=True)
+    """Inject the house styling. Call once, right after set_page_config().
+
+    Emits ONE stylesheet covering both modes - it never needs to know
+    which is active, and so never needs re-running when the user
+    switches. See the module docstring.
+    """
+    st.markdown(_css(), unsafe_allow_html=True)
