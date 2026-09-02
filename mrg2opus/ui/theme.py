@@ -72,6 +72,7 @@ WHITE = "#FFFFFF"
 # text hard to read - it was #999999 everywhere, under the 4.5:1 floor.
 MUTED_LIGHT = "#666666"
 MUTED_DARK = "#999999"
+BORDER_STRONG = "#CCCCCC"  # theirs too - panel outlines on the light ground
 
 # --- The derived tints, required by contrast on the dark ground -------------
 # MAGENTA lightened 35% toward white: 4.59:1 on INK, clears AA for text.
@@ -95,6 +96,13 @@ _MODE_TOKENS = {
     "--one-link-hover": (PLUM, WHITE),
     "--one-muted": (MUTED_LIGHT, MUTED_DARK),
     "--one-focus-ring": ("rgba(189, 15, 114, 0.35)", "rgba(212, 99, 163, 0.45)"),
+    # Panels (the file-uploader dropzone) need an outline in light mode and
+    # don't in dark. ONE's warm off-white panel sits at about 1.04:1 on
+    # white, so the box all but disappears; #CCCCCC is their own neutral
+    # and draws it back. On the dark ground the petrol panel already
+    # separates from the ink by itself, so that side is only a hairline -
+    # their neutral at low alpha rather than a new hue.
+    "--one-surface-border": (BORDER_STRONG, "rgba(229, 229, 229, 0.22)"),
 }
 
 # Without light-dark(), each token above would substitute as nonsense and
@@ -110,6 +118,7 @@ _FALLBACK_TOKENS = {
     "--one-link-hover": "currentColor",
     "--one-muted": "#777777",  # 4.48:1 on white, 3.52:1 on ink - the best single value
     "--one-focus-ring": "rgba(189, 15, 114, 0.4)",
+    "--one-surface-border": "rgba(128, 128, 128, 0.35)",  # reads on either ground
 }
 
 
@@ -240,14 +249,33 @@ def _css() -> str:
     font-weight: 700;
   }}
 
+  /* The file-uploader dropzone is a panel in the secondary background,
+     which on the light ground is ONE's warm off-white at about 1.04:1 on
+     white - the box effectively vanishes without an outline. */
+  [data-testid="stFileUploaderDropzone"] {{
+    border: 1px solid var(--one-surface-border);
+  }}
+
   /* Callouts get a coloured rule on the left, the way ONE's own notices
      do. Only the two whose default tint fights the palette are changed:
      info picks up petrol, warning ONE's own orange accent. Success and
      error keep Streamlit's green and red - those colours carry meaning
      that outranks the brand, and a filing that failed should not look
-     on-brand. */
-  [data-testid="stAlertContentInfo"] {{ border-left: 4px solid var(--one-heading); }}
-  [data-testid="stAlertContentWarning"] {{ border-left: 4px solid var(--one-orange); }}
+     on-brand.
+     The rule goes on the CONTAINER, matched by :has() on the kind, not on
+     the content element: the content is inset by the container's own
+     16px padding, so a border there floated in the middle of the box with
+     the text jammed against it. On the container it sits flush down the
+     edge and the existing padding does the spacing. overflow keeps it
+     inside the rounded corners. */
+  [data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) {{
+    border-left: 4px solid var(--one-heading);
+    overflow: hidden;
+  }}
+  [data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]) {{
+    border-left: 4px solid var(--one-orange);
+    overflow: hidden;
+  }}
 
   /* --- "You can change this" -------------------------------------------
      Anything the user can actually edit gets a magenta left edge that
