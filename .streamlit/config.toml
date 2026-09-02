@@ -15,6 +15,16 @@
 font = "sans serif"
 baseRadius = "small"
 buttonRadius = "small"
+# Borders are ONE's #888888 in BOTH modes, so they live here rather than
+# in the two blocks below. It is the one neutral in their palette that
+# clears WCAG's 3:1 for interface parts against both grounds - 3.54:1 on
+# white, 4.45:1 on the ink ground - which makes "the same everywhere" and
+# "actually visible" the same choice. The previous #E5E5E5 managed
+# 1.26:1 on white, which is why table lines, input boxes, checkboxes and
+# expanders all read as missing in light mode.
+borderColor = "#888888"
+dataframeBorderColor = "#888888"
+showWidgetBorder = true
 
 [theme.light]
 primaryColor = "#BD0F72"              # ONE magenta - primary button fills
@@ -22,8 +32,13 @@ backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F8F6F4"  # their warm off-white
 textColor = "#002636"                 # their deepest navy
 linkColor = "#BD0F72"                 # magenta reads at 6.04:1 on white
-borderColor = "#E5E5E5"
-dataframeHeaderBackgroundColor = "#004D6C"
+# A PALE petrol here, not the full-strength one. Streamlit chooses the
+# dataframe header's TEXT colour itself and offers no option for it, so
+# the band has to suit the text rather than the other way round: in light
+# mode that text is the near-black #002636, which on full petrol scores
+# 1.71:1 and cannot be read. Petrol lightened 80% keeps the hue, takes
+# that to 11.12:1, and still reads as a band against the white page.
+dataframeHeaderBackgroundColor = "#CCDBE2"
 
 [theme.dark]
 primaryColor = "#BD0F72"              # the true magenta still holds white text (6.04:1)
@@ -31,7 +46,8 @@ backgroundColor = "#002636"           # ONE ink - the page ground
 secondaryBackgroundColor = "#004D6C"  # ONE petrol - raised panels
 textColor = "#E5E5E5"                 # their neutral; 12.53:1 on the ground
 linkColor = "#D463A3"                 # magenta lightened 35%; 4.59:1, clears AA
-borderColor = "#004D6C"
+# Full-strength petrol is right here: dark mode's header text is light,
+# and scores 7.32:1 on it.
 dataframeHeaderBackgroundColor = "#004D6C"
 
 [server]

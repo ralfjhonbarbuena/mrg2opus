@@ -28,13 +28,15 @@ work, which is why the dark app isn't built on invented greys: INK
 can't survive the flip is anything used as TEXT - petrol as heading text
 scores 1.71:1 on the ink ground and magenta as link text 2.61:1, both
 under the 4.5:1 AA floor - so each gets a lightened tint, computed rather
-than eyeballed. Those tints, plus a second muted grey, are the only
-values here that aren't ONE's verbatim. The true magenta is kept where it
-matters most, as the FILL of primary buttons, where white on it scores
-6.04:1 either way.
-Measured in the running app - light: text 15.78:1, headings 9.22:1,
-captions 5.74:1, links 6.04:1. Dark: text 12.53:1, headings 10.11:1,
-captions 5.54:1, links 4.59:1.
+than eyeballed. Those three tints are the only values here that aren't
+ONE's verbatim. The true magenta is kept where it matters most, as the
+FILL of primary buttons, where white on it scores 6.04:1 either way.
+
+Measured in the running app - light: text and captions 15.78:1, headings
+9.22:1, links 6.04:1. Dark: text and captions 12.53:1, headings 10.11:1,
+links 4.59:1. Captions deliberately share the body text colour rather
+than being greyed. Borders are one shared #888888, clearing WCAG's 3:1
+for interface parts on both grounds (3.54:1 and 4.45:1).
 
 HOW THE MODE IS DETECTED, and why not in Python. This used to branch on
 st.context.theme.type and bake one mode's colours into each run. That is
@@ -65,14 +67,20 @@ ORANGE = "#F99D21"  # sparing highlight accent
 TEXT_DARK = "#E5E5E5"
 WHITE = "#FFFFFF"
 
-# Captions need a different neutral per mode, and ONE's palette happens to
-# carry one for each: neither works on both grounds. #666666 scores 5.74:1
-# on white but only 2.75:1 on the ink ground; #999999 is the mirror image
-# at 2.85:1 and 5.54:1. Using one for both is what made light-mode caption
-# text hard to read - it was #999999 everywhere, under the 4.5:1 floor.
-MUTED_LIGHT = "#666666"
-MUTED_DARK = "#999999"
-BORDER_STRONG = "#CCCCCC"  # theirs too - panel outlines on the light ground
+# Captions are the SAME colour as body text, not a grey: full ink on the
+# light ground, full neutral on the dark one. Greys were tried twice and
+# rejected as hard to read (#999999 first, then #666666/#444444) - and
+# there is a lot of caption text here, much of it load-bearing
+# explanation rather than incidental, so it should not be dimmed at all.
+# Size alone carries the hierarchy, which Streamlit already handles.
+MUTED_LIGHT = INK  # 15.78:1 on white - identical to body text
+MUTED_DARK = TEXT_DARK  # 12.53:1 on the ink ground - identical to body text
+
+# The one neutral in ONE's palette that clears WCAG's 3:1 for interface
+# parts on BOTH grounds - 3.54:1 on white, 4.45:1 on ink - so every border
+# in the app is this single value, in either mode. config.toml uses it for
+# borderColor/dataframeBorderColor; the panel outline below matches.
+BORDER = "#888888"
 
 # --- The derived tints, required by contrast on the dark ground -------------
 # MAGENTA lightened 35% toward white: 4.59:1 on INK, clears AA for text.
@@ -96,13 +104,6 @@ _MODE_TOKENS = {
     "--one-link-hover": (PLUM, WHITE),
     "--one-muted": (MUTED_LIGHT, MUTED_DARK),
     "--one-focus-ring": ("rgba(189, 15, 114, 0.35)", "rgba(212, 99, 163, 0.45)"),
-    # Panels (the file-uploader dropzone) need an outline in light mode and
-    # don't in dark. ONE's warm off-white panel sits at about 1.04:1 on
-    # white, so the box all but disappears; #CCCCCC is their own neutral
-    # and draws it back. On the dark ground the petrol panel already
-    # separates from the ink by itself, so that side is only a hairline -
-    # their neutral at low alpha rather than a new hue.
-    "--one-surface-border": (BORDER_STRONG, "rgba(229, 229, 229, 0.22)"),
 }
 
 # Without light-dark(), each token above would substitute as nonsense and
@@ -118,7 +119,6 @@ _FALLBACK_TOKENS = {
     "--one-link-hover": "currentColor",
     "--one-muted": "#777777",  # 4.48:1 on white, 3.52:1 on ink - the best single value
     "--one-focus-ring": "rgba(189, 15, 114, 0.4)",
-    "--one-surface-border": "rgba(128, 128, 128, 0.35)",  # reads on either ground
 }
 
 
@@ -141,6 +141,7 @@ def _css() -> str:
     --one-magenta: {MAGENTA};
     --one-orange: {ORANGE};
     --one-petrol: {PETROL};
+    --one-border: {BORDER};
   }}
 
   /* Mode-DEPENDENT tokens, resolved by CSS rather than by Python - see
@@ -251,9 +252,10 @@ def _css() -> str:
 
   /* The file-uploader dropzone is a panel in the secondary background,
      which on the light ground is ONE's warm off-white at about 1.04:1 on
-     white - the box effectively vanishes without an outline. */
+     white - the box effectively vanishes without an outline. Same border
+     as every other control, so panels and widgets read alike. */
   [data-testid="stFileUploaderDropzone"] {{
-    border: 1px solid var(--one-surface-border);
+    border: 1px solid var(--one-border);
   }}
 
   /* Callouts get a coloured rule on the left, the way ONE's own notices

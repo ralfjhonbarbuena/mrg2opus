@@ -10,13 +10,6 @@ from mrg2opus.ui.parsing import run_parser
 from mrg2opus.ui.sheets import output_sheets
 from mrg2opus.ui.state import WizardState
 
-# st.data_editor draws its cells to a <canvas>, so CSS can't tint the
-# editable columns the way ui/theme.py marks every other editable control
-# (a magenta left edge). The column HEADERS are plain strings though, so
-# the same signal is carried there: a pencil on what you can change, and
-# "(parsed)" on the two locked reference columns.
-_EDITABLE = "✏️"
-
 
 def render(state: WizardState) -> None:
     st.subheader("Customize")
@@ -48,80 +41,84 @@ def render(state: WizardState) -> None:
 
     groups = state.default_commodity_groups
     st.markdown("#### Commodity groups")
-    st.info(
-        f"**{_EDITABLE} marks the columns you can change.** Everything else on this page is editable too - "
-        "look for the magenta edge down the left of a control. Columns headed *(parsed)* are what the tool "
-        "read out of your file, shown for reference and locked."
-    )
     st.caption(
-        "Codes shown here are only starting suggestions from the parsed file - there is no commodity code "
-        "registry, so the code that ends up in the OPUS output should mainly come from you. Descriptions ship "
-        "with a sensible default but are always yours to change too. This table doesn't support mouse dragging "
-        "to reorder rows, but the **Order** column does the same job: give groups numbers to set the sequence "
-        "they'll appear in on the generated OPUS RATES / RATES PORT-PORT / CMDT NOTE sheets - lower numbers "
-        "come first. Two (or more) groups given the exact same Description merge into one CMDT NOTE block. "
-        "**Skip DG** stops just that group's base Dry rows from also filing an identical D/DG duplicate - to "
+        "Every column here is yours to change. **CMDT Code** is numbered G0001, G0002, ... in the order the "
+        "groups were found - a placeholder, never a code read out of your file, since there is no commodity "
+        "code registry; edit it to whatever your account files under. **CMDT Description** starts as the "
+        "description the tool derived, and two groups given the exact same description merge into one CMDT "
+        "NOTE block. This table doesn't support mouse dragging to reorder rows, but **Order** does the same "
+        "job: lower numbers appear first on the generated OPUS RATES / RATES PORT-PORT / CMDT NOTE sheets. "
+        "Leave **CMDT Seq** blank to let the tool number the group itself. **Skip Filing** leaves the group "
+        "out of the filing entirely; **Skip DG** keeps the group but drops only its D/DG duplicate rows - to "
         "turn Dangerous Goods off for the whole filing instead, use the Dangerous Goods checkbox below."
     )
     if groups:
         existing_order = state.profile.commodity_group_order
+        # Every override dict is keyed by the group's DEFAULT description
+        # (desc) - see parsers/common/commodity.py's module docstring. The
+        # parser's own structural code can't serve as that key (several
+        # groups share one, e.g. LAWC's main dry grid / "Reefer" / "LAWC
+        # NOR" are all internally G0001) and isn't shown at all: the code
+        # the user sees is the sequential G0001, G0002, ... placeholder
+        # seeded into commodity_code_overrides right after the first parse
+        # by commodity_utils.assign_sequential_default_codes().
         editor_rows = [
             {
                 "order": (existing_order.index(desc) + 1) if desc in existing_order else len(existing_order) + i + 1,
-                "default_code": code,
-                "default_description": desc,
-                # All three overrides are keyed by the group's DEFAULT
-                # description (desc), not its code - see
-                # parsers/common/commodity.py's module docstring. Several
-                # groups can share one default code (e.g. LAWC's main dry
-                # grid/"Reefer"/"LAWC NOR" all default to G0001), so code
-                # can't serve as a unique key here.
                 "code": state.profile.commodity_code_overrides.get(desc, code),
                 "description": state.profile.commodity_description_overrides.get(desc, desc),
                 "override_cmdt_seq": state.profile.commodity_sequence_overrides.get(desc),
+                "skip_filing": state.profile.skip_commodity_filing.get(desc, False),
                 "skip_dg": state.profile.skip_dg_generation.get(desc, False),
             }
             for i, (code, desc) in enumerate(groups)
         ]
-        editor_rows.sort(key=lambda r: r["order"])
+        # The default description is the key every override is stored
+        # under, but showing it beside the editable one is what made the
+        # table confusing ("which of these two do I change?"), so it's
+        # kept out of the editor entirely and recovered positionally when
+        # the edits come back - see the zip() below. Sorting both lists
+        # the same way is what makes that safe; data_editor never adds,
+        # deletes or moves rows (num_rows is "fixed" by default).
+        row_keys = [desc for _code, desc in groups]
+        paired = sorted(zip(editor_rows, row_keys), key=lambda pair: pair[0]["order"])
+        editor_rows = [row for row, _key in paired]
+        row_keys = [key for _row, key in paired]
         edited = st.data_editor(
             editor_rows,
             hide_index=True,
             width="stretch",
-            disabled=["default_code", "default_description"],
-            column_order=["order", "default_code", "default_description", "code", "description", "override_cmdt_seq", "skip_dg"],
+            column_order=["order", "override_cmdt_seq", "code", "description", "skip_filing", "skip_dg"],
             column_config={
                 "order": st.column_config.NumberColumn(
-                    f"{_EDITABLE} Order", step=1, required=True,
-                    help="Editable. Lower numbers appear first in the output.",
-                ),
-                "default_code": st.column_config.TextColumn(
-                    "Code (parsed)", help="Read-only: what the tool read out of your file.",
-                ),
-                "default_description": st.column_config.TextColumn(
-                    "Description (parsed)", help="Read-only: what the tool read out of your file.",
-                ),
-                "code": st.column_config.TextColumn(
-                    f"{_EDITABLE} Code", required=True,
-                    help="Editable. This is the code that lands in the OPUS output.",
-                ),
-                "description": st.column_config.TextColumn(
-                    f"{_EDITABLE} Description", required=True,
-                    help="Editable. Two groups given the same description merge into one CMDT NOTE block.",
+                    "Order", step=1, required=True,
+                    help="Lower numbers appear first in the output.",
                 ),
                 "override_cmdt_seq": st.column_config.NumberColumn(
-                    f"{_EDITABLE} Override CMDT Seq", step=1,
-                    help="Editable. Leave blank to let the tool number this group automatically.",
+                    "CMDT Seq", step=1,
+                    help="Leave blank to let the tool number this group automatically.",
+                ),
+                "code": st.column_config.TextColumn(
+                    "CMDT Code", required=True,
+                    help="The code that lands in the OPUS output. A G0001-onwards placeholder by default.",
+                ),
+                "description": st.column_config.TextColumn(
+                    "CMDT Description", required=True,
+                    help="Two groups given the same description merge into one CMDT NOTE block.",
+                ),
+                "skip_filing": st.column_config.CheckboxColumn(
+                    "Skip Filing",
+                    help="Leave this commodity group out of the filing altogether.",
                 ),
                 "skip_dg": st.column_config.CheckboxColumn(
-                    f"{_EDITABLE} Skip DG",
-                    help="Editable. Don't file a D/DG duplicate for this group's base Dry rows.",
+                    "Skip DG",
+                    help="Keep the group, but don't file a D/DG duplicate of its base Dry rows.",
                 ),
             },
             key="commodity_overrides_editor",
         )
     else:
-        edited = []
+        edited, row_keys = [], []
         st.caption("No commodity groups found in the parsed output.")
 
     st.markdown("#### Special instructions")
@@ -250,40 +247,46 @@ def render(state: WizardState) -> None:
             st.rerun()
     with col_next:
         if st.button("Apply & Continue to Export →", type="primary"):
-            # Keyed by each row's default_description - the stable identity
-            # every override dict uses (see the editor_rows comment above).
+            # Each edited row is paired back to the default description it
+            # came from by POSITION - that key isn't a column any more, so
+            # it can't be read off the row (see the row_keys comment where
+            # the editor is built). Everything below keys on `key`, the
+            # stable identity every override dict uses.
+            rows = list(zip(edited, row_keys))
+            # The code column IS the override now - there is no separate
+            # parsed code to compare against, and its own default was
+            # already seeded as an override at Step 2.
             code_overrides = {
-                r["default_description"]: r["code"].strip()
-                for r in edited
-                if r.get("code") and r["code"].strip() and r["code"].strip() != r["default_code"]
+                key: r["code"].strip()
+                for r, key in rows
+                if r.get("code") and r["code"].strip()
             }
             description_overrides = {
-                r["default_description"]: r["description"].strip()
-                for r in edited
-                if r.get("description") and r["description"].strip() and r["description"].strip() != r["default_description"]
+                key: r["description"].strip()
+                for r, key in rows
+                if r.get("description") and r["description"].strip() and r["description"].strip() != key
             }
             sequence_overrides = {
-                r["default_description"]: int(r["override_cmdt_seq"])
-                for r in edited
+                key: int(r["override_cmdt_seq"])
+                for r, key in rows
                 if r.get("override_cmdt_seq") not in (None, "")
             }
             skip_output_sheets = {name: skip for name, skip in skip_choices.items() if skip}
+            skip_commodity_filing = {key: True for r, key in rows if r.get("skip_filing")}
             # Master DG toggle wins when it's off (skip every group);
             # when on, the per-group Skip DG column decides. TAD lanes
             # don't use this dict at all - their toggle is the bool below.
             if not generate_dg and not is_tad_lane:
-                skip_dg_generation = {r["default_description"]: True for r in edited}
+                skip_dg_generation = {key: True for _r, key in rows}
             else:
-                skip_dg_generation = {
-                    r["default_description"]: True for r in edited if r.get("skip_dg")
-                }
+                skip_dg_generation = {key: True for r, key in rows if r.get("skip_dg")}
             # The FINAL description (post-override) of each row, sorted by
             # its "Order" value - this is what actually ends up on the
             # output rows, so it's what group_order needs to match against
             # (see parsers/common/ordering.py::reorder_row_set()).
             commodity_group_order = [
-                (r["description"].strip() if r.get("description") else r["default_description"])
-                for r in sorted(edited, key=lambda r: r.get("order", 0))
+                (r["description"].strip() if r.get("description") else key)
+                for r, key in sorted(rows, key=lambda pair: pair[0].get("order", 0))
             ]
 
             excluded_charge_codes = [
@@ -298,6 +301,7 @@ def render(state: WizardState) -> None:
                     "commodity_group_order": commodity_group_order,
                     "skip_output_sheets": skip_output_sheets,
                     "skip_dg_generation": skip_dg_generation,
+                    "skip_commodity_filing": skip_commodity_filing,
                     "excluded_charge_codes": excluded_charge_codes,
                     "rfa_effective_date": rfa_effective_date,
                     "rfa_expiry_date": rfa_expiry_date,

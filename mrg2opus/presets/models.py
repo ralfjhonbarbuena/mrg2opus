@@ -58,6 +58,19 @@ class MappingProfile(BaseModel):
     # parser's own comment at its `cgo_type == "DR"` check). Absent/False
     # keeps that default behavior; True suppresses it for that one group.
     skip_dg_generation: dict[str, bool] = Field(default_factory=dict)
+    # default_description -> True to leave that commodity group out of the
+    # filing ALTOGETHER - every one of its RATES / RATES PORT-PORT /
+    # VERTICAL RATES rows and its whole CMDT NOTE block. Distinct from
+    # skip_dg_generation above, which only drops a group's D/DG duplicate
+    # and keeps the group itself; and from skip_output_sheets, which drops
+    # a whole SHEET across every group. Applied in pipeline.py::
+    # run_parser() rather than in each parser, so it works the same on all
+    # lanes. The remaining groups keep the CMDT Seq numbers the parser
+    # gave them, so skipping a middle group leaves a gap (1, 3, 4) -
+    # deliberate, since renumbering would silently move groups the user
+    # had pinned with an explicit sequence; the CMDT Seq column is there
+    # to close a gap by hand if a filing needs it.
+    skip_commodity_filing: dict[str, bool] = Field(default_factory=dict)
     # Charge codes to drop from every CMDT NOTE/SPECIAL NOTE-equivalent
     # block across the whole filing (not per-group - see
     # project-tool-mirrors-mrg-not-human-sop memory) - e.g. a Hong Kong

@@ -48,6 +48,43 @@ def reorder_by_group(items: list[_T], group_order: list[str], key_fn: Callable[[
     return [item for key in (*ordered_keys, *remaining_keys) for item in buckets[key]]
 
 
+def drop_commodity_groups(row_set: OpusRowSet, skipped: set[str]) -> OpusRowSet:
+    """Remove whole commodity groups from a parsed row set - every RATES
+    and RATES PORT-PORT row belonging to one, plus its entire CMDT NOTE
+    block (MappingProfile.skip_commodity_filing).
+
+    VERTICAL RATES is deliberately not touched: it is derived from `rates`
+    later in the same pipeline pass, so filtering here is what keeps it
+    out. Filtering it directly would be wrong anyway - its group columns
+    are blank-filled after the first row of each block, so matching on
+    description would drop a skipped group's first row and keep the rest.
+
+    Keyed on each row's FINAL commodity_group_description, the same
+    identity reorder_row_set() below keys on, so a group renamed in Step 3
+    is matched by its new name. PORT-PORT rows carry their own (sometimes
+    remapped) description, so they're matched on `source_group` first -
+    the original group they were exploded from - exactly as
+    sequencing.sync_port_port_cmdt_seq() does. CMDT NOTE rows have no
+    commodity_group_description of their own and use the internal
+    group_description bookkeeping field instead (see CmdtNoteRow).
+
+    Sequence numbers are deliberately NOT compacted afterwards - see
+    MappingProfile.skip_commodity_filing."""
+    if not skipped:
+        return row_set
+
+    def pp_key(row):
+        return row.source_group if row.source_group is not None else row.commodity_group_description
+
+    return row_set.model_copy(
+        update={
+            "rates": [r for r in row_set.rates if r.commodity_group_description not in skipped],
+            "rates_port_port": [r for r in row_set.rates_port_port if pp_key(r) not in skipped],
+            "cmdt_notes": [n for n in row_set.cmdt_notes if (n.group_description or "") not in skipped],
+        }
+    )
+
+
 def reorder_row_set(row_set: OpusRowSet, group_order: list[str]) -> OpusRowSet:
     """Reorders row_set.rates/rates_port_port/cmdt_notes to follow
     group_order (MappingProfile.commodity_group_order - a list of FINAL,

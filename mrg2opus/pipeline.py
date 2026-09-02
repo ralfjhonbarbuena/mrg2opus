@@ -10,7 +10,7 @@ profile said. Both the CLI and the Streamlit wizard go through here now.
 from __future__ import annotations
 
 from mrg2opus.parsers.base import BaseMRGParser
-from mrg2opus.parsers.common.ordering import reorder_row_set
+from mrg2opus.parsers.common.ordering import drop_commodity_groups, reorder_row_set
 from mrg2opus.parsers.common.sequencing import finalize_sequences
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema.opus_rows import OpusRowSet, build_vertical_rates
@@ -26,6 +26,12 @@ VERTICAL_RATES_ROW_CAP = 10_000
 
 def run_parser(parser: BaseMRGParser, workbook, profile: MappingProfile) -> dict[str, OpusRowSet]:
     row_sets = parser.run_multi(workbook, profile)
+    # Before everything else, so the dropped groups are absent from the
+    # ordering, the sequence fixups and the VERTICAL RATES derivation
+    # alike - that last one is how they stay out of that sheet.
+    skipped = {desc for desc, skip in profile.skip_commodity_filing.items() if skip}
+    if skipped:
+        row_sets = {suffix: drop_commodity_groups(rs, skipped) for suffix, rs in row_sets.items()}
     if profile.commodity_group_order:
         row_sets = {suffix: reorder_row_set(rs, profile.commodity_group_order) for suffix, rs in row_sets.items()}
     # After reordering (blocks move as units, so this stays correct) and
