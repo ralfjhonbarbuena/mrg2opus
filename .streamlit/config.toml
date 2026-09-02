@@ -1,0 +1,40 @@
+# Ocean Network Express house colours, as two real Streamlit themes.
+#
+# Both palettes are declared natively so the built-in appearance switch
+# (toolbar ... -> Settings -> Appearance) genuinely toggles between them -
+# backgrounds, text, links, borders and all. Nothing here forces a mode:
+# omitting theme.base is what leaves that choice with the user.
+#
+# The dark surfaces are ONE's own dark colours, not invented greys:
+# #002636 is their deepest navy and #004D6C their structural petrol.
+# See mrg2opus/ui/theme.py for the palette's provenance, the measured
+# contrast ratios, and the styling config.toml can't express.
+# These MUST stay in step with that module's constants.
+
+[theme]
+font = "sans serif"
+baseRadius = "small"
+buttonRadius = "small"
+
+[theme.light]
+primaryColor = "#BD0F72"              # ONE magenta - primary button fills
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F8F6F4"  # their warm off-white
+textColor = "#002636"                 # their deepest navy
+linkColor = "#BD0F72"                 # magenta reads at 6.04:1 on white
+borderColor = "#E5E5E5"
+dataframeHeaderBackgroundColor = "#004D6C"
+
+[theme.dark]
+primaryColor = "#BD0F72"              # the true magenta still holds white text (6.04:1)
+backgroundColor = "#002636"           # ONE ink - the page ground
+secondaryBackgroundColor = "#004D6C"  # ONE petrol - raised panels
+textColor = "#E5E5E5"                 # their neutral; 12.53:1 on the ground
+linkColor = "#D463A3"                 # magenta lightened 35%; 4.59:1, clears AA
+borderColor = "#004D6C"
+dataframeHeaderBackgroundColor = "#004D6C"
+
+[server]
+# Uploaded MRG workbooks are large; the 200MB default cap is what the
+# uploader already advertises to the user.
+maxUploadSize = 200

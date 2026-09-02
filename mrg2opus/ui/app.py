@@ -38,6 +38,7 @@ from mrg2opus.parsers import (  # noqa: F401
 )
 from mrg2opus.ui import compare_page
 from mrg2opus.ui.state import get_state
+from mrg2opus.ui.theme import appearance_hint, apply_theme
 from mrg2opus.ui.steps import step1_upload, step2_preview, step3_customize, step4_export
 
 STEP_LABELS = {
@@ -57,9 +58,14 @@ STEP_RENDERERS = {
 
 def main() -> None:
     st.set_page_config(page_title="mrg2opus", layout="wide")
+    apply_theme()  # must follow set_page_config; see ui/theme.py
     st.title("MRG → OPUS Converter")
 
-    mode = st.radio("Mode", options=["Convert", "Compare"], horizontal=True)
+    col_mode, col_appearance = st.columns([3, 2])
+    with col_mode:
+        mode = st.radio("Mode", options=["Convert", "Compare"], horizontal=True)
+    with col_appearance:
+        st.caption(appearance_hint())
     st.divider()
 
     if mode == "Compare":

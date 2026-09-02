@@ -10,6 +10,14 @@ from mrg2opus.ui.parsing import run_parser
 from mrg2opus.ui.sheets import output_sheets
 from mrg2opus.ui.state import WizardState
 
+# st.data_editor draws its cells to a <canvas>, so CSS can't tint the
+# editable columns the way ui/theme.py marks every other editable control
+# (a magenta left edge). The column HEADERS are plain strings though, so
+# the same signal is carried there: a pencil on what you can change, and
+# "(parsed)" on the two locked reference columns.
+_EDITABLE = "✏️"
+
+
 def render(state: WizardState) -> None:
     st.subheader("Customize")
 
@@ -40,6 +48,11 @@ def render(state: WizardState) -> None:
 
     groups = state.default_commodity_groups
     st.markdown("#### Commodity groups")
+    st.info(
+        f"**{_EDITABLE} marks the columns you can change.** Everything else on this page is editable too - "
+        "look for the magenta edge down the left of a control. Columns headed *(parsed)* are what the tool "
+        "read out of your file, shown for reference and locked."
+    )
     st.caption(
         "Codes shown here are only starting suggestions from the parsed file - there is no commodity code "
         "registry, so the code that ends up in the OPUS output should mainly come from you. Descriptions ship "
@@ -78,13 +91,32 @@ def render(state: WizardState) -> None:
             disabled=["default_code", "default_description"],
             column_order=["order", "default_code", "default_description", "code", "description", "override_cmdt_seq", "skip_dg"],
             column_config={
-                "order": st.column_config.NumberColumn("Order", step=1, required=True, help="Lower numbers appear first in the output."),
-                "default_code": st.column_config.TextColumn("Parsed default code"),
-                "default_description": st.column_config.TextColumn("Parsed default description"),
-                "code": st.column_config.TextColumn("Code (yours)", required=True),
-                "description": st.column_config.TextColumn("Description (yours)", required=True),
-                "override_cmdt_seq": st.column_config.NumberColumn("Override CMDT Seq", step=1),
-                "skip_dg": st.column_config.CheckboxColumn("Skip DG", help="Don't file a D/DG duplicate for this group's base Dry rows."),
+                "order": st.column_config.NumberColumn(
+                    f"{_EDITABLE} Order", step=1, required=True,
+                    help="Editable. Lower numbers appear first in the output.",
+                ),
+                "default_code": st.column_config.TextColumn(
+                    "Code (parsed)", help="Read-only: what the tool read out of your file.",
+                ),
+                "default_description": st.column_config.TextColumn(
+                    "Description (parsed)", help="Read-only: what the tool read out of your file.",
+                ),
+                "code": st.column_config.TextColumn(
+                    f"{_EDITABLE} Code", required=True,
+                    help="Editable. This is the code that lands in the OPUS output.",
+                ),
+                "description": st.column_config.TextColumn(
+                    f"{_EDITABLE} Description", required=True,
+                    help="Editable. Two groups given the same description merge into one CMDT NOTE block.",
+                ),
+                "override_cmdt_seq": st.column_config.NumberColumn(
+                    f"{_EDITABLE} Override CMDT Seq", step=1,
+                    help="Editable. Leave blank to let the tool number this group automatically.",
+                ),
+                "skip_dg": st.column_config.CheckboxColumn(
+                    f"{_EDITABLE} Skip DG",
+                    help="Editable. Don't file a D/DG duplicate for this group's base Dry rows.",
+                ),
             },
             key="commodity_overrides_editor",
         )
