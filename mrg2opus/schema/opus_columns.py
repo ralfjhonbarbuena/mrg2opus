@@ -114,6 +114,11 @@ CMDT_NOTE_HEADER = [
     "Cur.", "Cal.", "Amount", "Pay Term", "Pay Ofc", "Payer", "Per", "CGO\nType",
     "IMDG\nClass", "PSA Grp.", "Food\nGrade", "Lane", "T/S\nPort", "Canal", "VVD", "SOC",
     "POR", "POL", "POD", "DEL", "Node", "CMDT",
+    # The 9 trailing columns confirmed on all three note sheets by the
+    # user's own OPUS HEADERS.xlsx (CMDT NOTE and SPECIAL NOTE are 39
+    # columns wide there). RN carries these plus a 41st, Premium.
+    "Receiving\nTerm", "Delivery\nTerm", "Weight\n(=> Metric Ton)", "Weight\n( < Metric Ton)",
+    "Direct\nCall", "Bar Type", "S/I", "M'ty Pick up CY", "M'ty Return CY",
 ]
 
 CMDT_NOTE_ROW_FIELDS = [
@@ -122,6 +127,11 @@ CMDT_NOTE_ROW_FIELDS = [
     "cur", "cal", "amount", "pay_term", "pay_ofc", "payer", "per", "cgo_type",
     "imdg_class", "psa_grp", "food_grade", "lane", "ts_port", "canal", "vvd", "soc",
     "por", "pol", "pod", "delivery", "node", "cmdt",
+    # The 9 trailing columns confirmed on all three note sheets by the
+    # user's own OPUS HEADERS.xlsx (CMDT NOTE and SPECIAL NOTE are 39
+    # columns wide there). RN carries these plus a 41st, Premium.
+    "receiving_term", "delivery_term", "weight_gte_mt", "weight_lt_mt",
+    "direct_call", "bar_type", "s_i", "mty_pickup_cy", "mty_return_cy",
 ]
 
 # OPUS SPECIAL NOTE has the same field set as CMDT NOTE (SpecialNoteRow
@@ -134,6 +144,11 @@ SPECIAL_NOTE_HEADER = [
     "Cur.", "Cal.", "Amount", "Pay Term", "Pay Ofc", "Payer", "Per", "CGO\nType",
     "IMDG\nClass", "PSA Grp.", "Food\nGrade", "Lane", "T/S\nPort", "Canal", "VVD", "SOC",
     "POR", "POL", "POD", "DEL", "Node", "CMDT",
+    # The 9 trailing columns confirmed on all three note sheets by the
+    # user's own OPUS HEADERS.xlsx (CMDT NOTE and SPECIAL NOTE are 39
+    # columns wide there). RN carries these plus a 41st, Premium.
+    "Receiving\nTerm", "Delivery\nTerm", "Weight\n(=> Metric Ton)", "Weight\n( < Metric Ton)",
+    "Direct\nCall", "Bar Type", "S/I", "M'ty Pick up CY", "M'ty Return CY",
 ]
 
 SPECIAL_NOTE_ROW_FIELDS = [
@@ -142,6 +157,11 @@ SPECIAL_NOTE_ROW_FIELDS = [
     "cur", "cal", "amount", "pay_term", "pay_ofc", "payer", "per", "cgo_type",
     "imdg_class", "psa_grp", "food_grade", "lane", "ts_port", "canal", "vvd", "soc",
     "por", "pol", "pod", "delivery", "node", "cmdt",
+    # The 9 trailing columns confirmed on all three note sheets by the
+    # user's own OPUS HEADERS.xlsx (CMDT NOTE and SPECIAL NOTE are 39
+    # columns wide there). RN carries these plus a 41st, Premium.
+    "receiving_term", "delivery_term", "weight_gte_mt", "weight_lt_mt",
+    "direct_call", "bar_type", "s_i", "mty_pickup_cy", "mty_return_cy",
 ]
 
 # --- RN (ROUTE NOTE): single header row --------------------------------------
@@ -226,6 +246,34 @@ FREETIME_UNFILED_FIELDS = frozenset({
     "rfa_no", "status",
     "dar_no", "ver", "approval_no", "proposal_no", "customer_code", "customer_name",
 })
+
+
+# --- Header merge ranges -----------------------------------------------------
+# OPUS merges the group label across its span rather than repeating it, and
+# these are the exact ranges from the user's own OPUS HEADERS.xlsx (2026-09-05),
+# copied rather than derived. Deriving them from the *_HEADER_GROUP /
+# *_HEADER_FIELD lists above looks obvious and does not work: the real headers
+# are irregular. VERTICAL RATES is the clearest case - O.Via, D.Via and
+# Destination share ONE "Code" cell in the second row (K2:M2), a row-2 merge
+# that crosses under a row-1 span (M1:P1), which no rule over those two flat
+# lists can express.
+# The value lists still supply the text: our lists repeat a group label across
+# its whole span, and merging keeps only the top-left cell, so the two agree.
+RATES_HEADER_MERGES = [
+    "A1:A2", "B1:B2", "C1:D1", "E1:F1", "G1:G2", "H1:K1", "N1:Q1", "R1:AA1",
+    "AB1:AB2", "AC1:AC2",
+]
+
+VERTICAL_RATES_HEADER_MERGES = [
+    "A1:A2", "B1:C1", "D1:E1", "F1:F2", "G1:J1", "M1:P1", "Q1:S1", "K2:M2",
+]
+
+FREETIME_HEADER_MERGES = [
+    "A1:A2", "B1:B2", "C1:C2", "D1:D2", "E1:E2", "F1:F2", "G1:G2", "H1:H2",
+    "I1:I2", "J1:L1", "M1:O1", "P1:R1", "S1:V1", "W1:Y1", "Z1:AA1", "AB1:AC1",
+    "AD1:AD2", "AE1:AF1", "AG1:AJ1", "AK1:AL1", "AM1:AM2", "AN1:AN2",
+    "AO1:AO2", "AP1:AP2", "AQ1:AQ2", "AR1:AR2", "AS1:AT1",
+]
 
 # --- Legacy bundled-sample sheet names ---------------------------------------
 # These match the literal sheet names inside the older, hand-prepared

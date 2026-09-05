@@ -22,10 +22,28 @@ from mrg2opus.schema.opus_rows import (
 )
 
 
+def _write_two_row_header(
+    ws: Worksheet, group: list[str], field: list[str | None], merges: list[str]
+) -> None:
+    """Write a 2-row header with OPUS's own merged cells.
+
+    OPUS merges each group label across its span instead of repeating it,
+    and the user asked for that exact format (their OPUS HEADERS.xlsx).
+    The ranges come from that file - see opus_columns' *_HEADER_MERGES for
+    why they are copied rather than derived from the two lists here.
+    Writing the repeated label and then merging is what lines the two up:
+    openpyxl keeps only the top-left cell of a merged range, so the
+    duplicates collapse into the single label the reference shows.
+    """
+    ws.append(group)
+    ws.append([f or "" for f in field])
+    for merge_range in merges:
+        ws.merge_cells(merge_range)
+
+
 def _write_rates_sheet(wb: Workbook, sheet_name: str, rows: list[RatesRow]) -> None:
     ws: Worksheet = wb.create_sheet(sheet_name)
-    ws.append(cols.RATES_HEADER_GROUP)
-    ws.append([f or "" for f in cols.RATES_HEADER_FIELD])
+    _write_two_row_header(ws, cols.RATES_HEADER_GROUP, cols.RATES_HEADER_FIELD, cols.RATES_HEADER_MERGES)
     for row in rows:
         data = row.model_dump()
         ws.append([data[field_name] for field_name in cols.RATES_ROW_FIELDS])
@@ -33,8 +51,7 @@ def _write_rates_sheet(wb: Workbook, sheet_name: str, rows: list[RatesRow]) -> N
 
 def _write_vertical_rates_sheet(wb: Workbook, sheet_name: str, rows: list[VerticalRatesRow]) -> None:
     ws: Worksheet = wb.create_sheet(sheet_name)
-    ws.append(cols.VERTICAL_RATES_HEADER_GROUP)
-    ws.append([f or "" for f in cols.VERTICAL_RATES_HEADER_FIELD])
+    _write_two_row_header(ws, cols.VERTICAL_RATES_HEADER_GROUP, cols.VERTICAL_RATES_HEADER_FIELD, cols.VERTICAL_RATES_HEADER_MERGES)
     for row in rows:
         data = row.model_dump()
         ws.append([data[field_name] for field_name in cols.VERTICAL_RATES_ROW_FIELDS])
@@ -76,8 +93,7 @@ def _write_route_note_sheet(wb: Workbook, sheet_name: str, rows: list[RouteNoteR
 
 def _write_freetime_sheet(wb: Workbook, sheet_name: str, rows: list[FreetimeRow]) -> None:
     ws: Worksheet = wb.create_sheet(sheet_name)
-    ws.append(cols.FREETIME_HEADER_GROUP)
-    ws.append([f or "" for f in cols.FREETIME_HEADER_FIELD])
+    _write_two_row_header(ws, cols.FREETIME_HEADER_GROUP, cols.FREETIME_HEADER_FIELD, cols.FREETIME_HEADER_MERGES)
     for row in rows:
         data = row.model_dump()
         # Blank, not absent: the header keeps its full width and each

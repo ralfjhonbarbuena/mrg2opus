@@ -93,7 +93,9 @@ def test_freetime_sheet_blanks_the_columns_opus_assigns_itself():
     assert ws.max_column == 46
     header = [ws.cell(row=1, column=c).value for c in range(1, 47)]
     assert header[1] == "RFA No." and header[2] == "Status"
-    assert header[40] == "DAR No." and header[45] == "Customer"
+    # "Customer" spans the last two columns (AS1:AT1), so only the first
+    # of the pair holds the label - merging keeps the top-left cell.
+    assert header[40] == "DAR No." and header[44] == "Customer" and header[45] is None
 
     values = {header[c - 1]: ws.cell(row=3, column=c).value for c in range(1, 47)}
     assert values["RFA No."] is None

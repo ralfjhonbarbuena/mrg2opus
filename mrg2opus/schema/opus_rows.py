@@ -181,26 +181,94 @@ _VERTICAL_ROW_FIELDS = [
 ]
 
 
+def _split_codes(value: Optional[str]) -> list[str]:
+    return [part for part in (value or "").split(";") if part] or ([value] if value else [])
+
+
+def _location_name(code: str, fallback: Optional[str]) -> Optional[str]:
+    """A single location's own name, resolved from the Location Bank.
+
+    It CANNOT be taken positionally out of the ";"-joined description: a
+    grouped row sorts its codes by code and its names by name, and the two
+    orders differ. LAWC's real "VNBHA;VNCMP;VNDIA;VNSGN" carries "CAI MEP;
+    DI AN, BINH DUONG;DONG NAI, BIEN HOA;HO CHI MINH", so zipping them
+    pairs VNBHA with CAI MEP - wrong, and wrong for all four. The bank
+    resolves each correctly (VNBHA is DONG NAI, BIEN HOA). Falls back to
+    the grouped string when a code isn't in the bank, which at least keeps
+    the old, no-worse behaviour.
+    """
+    from mrg2opus.location_bank.store import LocationBankStore  # local: schema shouldn't need this at import
+
+    global _LOCATION_LOOKUP
+    if _LOCATION_LOOKUP is None:
+        try:
+            _LOCATION_LOOKUP = LocationBankStore()
+        except Exception:  # noqa: BLE001 - no bank available; keep exploding, just without names
+            _LOCATION_LOOKUP = False
+    if _LOCATION_LOOKUP is False:
+        return fallback
+    try:
+        record = _LOCATION_LOOKUP.get_by_code(code)
+    except Exception:  # noqa: BLE001
+        return fallback
+    return record.primary_name if record else fallback
+
+
+_LOCATION_LOOKUP: object = None
+
+
 def explode_to_vertical_rates(row: RatesRow, *, start_of_group: bool = True) -> list[VerticalRatesRow]:
-    """One RatesRow -> 0-4 VerticalRatesRow, one per populated rate slot.
+    """One RatesRow -> the VerticalRatesRow rows it occupies on the sheet.
+
+    OPUS does not accept a ";"-joined list of ports in this format: each
+    location gets its own row, listed DOWNWARDS under the first, with the
+    Route Seq and commodity block written once at the top (user-reported,
+    2026-09-05). Origins, destinations and rate slots each run down their
+    own column INDEPENDENTLY - this is not a cartesian product - so the
+    row count is simply the longest of the three, and the shorter columns
+    run out and stay blank. From the user's own example: 4 origins, 1
+    destination and 3 rate slots produce 4 rows, with the destination on
+    row 1 only and rates on rows 1-3.
 
     start_of_group: whether this row opens a new CMDT Seq block. Only then
     does the commodity block get written - see _VERTICAL_GROUP_FIELDS.
     """
-    present = [(getattr(row, field), digit) for field, digit in _VERTICAL_SIZE_SLOTS if getattr(row, field) is not None]
-    header = {name: getattr(row, name) for name in _VERTICAL_ROW_FIELDS}
-    if start_of_group:
-        header.update({name: getattr(row, name) for name in _VERTICAL_GROUP_FIELDS})
+    origins = _split_codes(row.origin_code)
+    destinations = _split_codes(row.destination_code)
+    slots = [
+        (getattr(row, field), digit)
+        for field, digit in _VERTICAL_SIZE_SLOTS
+        if getattr(row, field) is not None
+    ]
+    height = max(len(origins), len(destinations), len(slots))
+    if not height:
+        return []
+
     out: list[VerticalRatesRow] = []
-    for i, (rate, digit) in enumerate(present):
-        out.append(
-            VerticalRatesRow(
-                **(header if i == 0 else {}),
-                per=f"{row.prefix}{digit}",
-                cargo_type=row.cgo_type,
-                rate=rate,
-            )
-        )
+    for i in range(height):
+        data: dict[str, object] = {}
+        if i == 0:
+            data["route_seq"] = row.route_seq
+            data["o_via_code"] = row.o_via_code
+            data["d_via_code"] = row.d_via_code
+            if start_of_group:
+                data.update({name: getattr(row, name) for name in _VERTICAL_GROUP_FIELDS})
+        if i < len(origins):
+            data["origin_code"] = origins[i]
+            data["origin_description"] = _location_name(origins[i], row.origin_description)
+            data["origin_term"] = row.origin_term
+            data["origin_transmode"] = row.origin_transmode
+        if i < len(destinations):
+            data["destination_code"] = destinations[i]
+            data["destination_description"] = _location_name(destinations[i], row.destination_description)
+            data["destination_term"] = row.destination_term
+            data["destination_transmode"] = row.destination_transmode
+        if i < len(slots):
+            rate, digit = slots[i]
+            data["per"] = f"{row.prefix}{digit}"
+            data["cargo_type"] = row.cgo_type
+            data["rate"] = rate
+        out.append(VerticalRatesRow(**data))
     return out
 
 
@@ -377,6 +445,21 @@ class CmdtNoteRow(BaseModel):
     # needing to re-derive block boundaries from the flattened row list.
     group_description: Optional[str] = None
 
+    # The 9 trailing columns every note sheet carries. Confirmed present
+    # on all three in the user's own OPUS HEADERS.xlsx reference (CMDT
+    # NOTE and SPECIAL NOTE are 39 columns wide there, ROUTE NOTE 41);
+    # they used to live on RouteNoteRow alone, back when RN was the only
+    # sheet known to have them. RN's 41st, Premium, stays RN-only.
+    receiving_term: Optional[str] = None
+    delivery_term: Optional[str] = None
+    weight_gte_mt: Optional[str] = None
+    weight_lt_mt: Optional[str] = None
+    direct_call: Optional[str] = None
+    bar_type: Optional[str] = None
+    s_i: Optional[str] = None
+    mty_pickup_cy: Optional[str] = None
+    mty_return_cy: Optional[str] = None
+
 
 class SpecialNoteRow(CmdtNoteRow):
     """Same shape as CmdtNoteRow; written to a separate OPUS SPECIAL NOTE sheet."""
@@ -387,22 +470,13 @@ class RouteNoteRow(CmdtNoteRow):
     sequence (see project-opus-note-sheet-taxonomy memory) - written to the
     real OPUS system's "RN" sheet. Same shape as CmdtNoteRow plus route_seq
     (links back to the RatesRow it was derived from - see RatesRow.route_seq)
-    and the 10 trailing columns confirmed on the real RN sheet
-    (schema/opus_columns.py::RN_HEADER) that CmdtNoteRow doesn't carry.
+    and Premium, the one trailing column that is RN's alone - the other
+    nine are on CmdtNoteRow, shared with CMDT NOTE and SPECIAL NOTE.
     Unlike CMDT NOTE, real RN rows are header-only (charge_seq/code are
     always 1/"APP", no child charge-code rows) - there's no per-route
     surcharge-code breakdown to attach."""
 
     route_seq: Optional[int] = None
-    receiving_term: Optional[str] = None
-    delivery_term: Optional[str] = None
-    weight_gte_mt: Optional[str] = None
-    weight_lt_mt: Optional[str] = None
-    direct_call: Optional[str] = None
-    bar_type: Optional[str] = None
-    s_i: Optional[str] = None
-    mty_pickup_cy: Optional[str] = None
-    mty_return_cy: Optional[str] = None
     premium: Optional[str] = None
 
 
