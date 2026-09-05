@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.worksheet.worksheet import Worksheet
 
 from mrg2opus.schema import opus_columns as cols
@@ -22,8 +23,51 @@ from mrg2opus.schema.opus_rows import (
 )
 
 
+_HEADER_FILL = PatternFill("solid", start_color=cols.HEADER_FILL_RGB, end_color=cols.HEADER_FILL_RGB)
+_HEADER_FONT = Font(name=cols.HEADER_FONT_NAME, size=cols.HEADER_FONT_SIZE, color=cols.HEADER_FONT_RGB)
+_HEADER_ALIGNMENT = Alignment(horizontal="center", vertical="center", wrap_text=True)
+_THIN = Side(style="thin")
+_HEADER_BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
+
+
+def _style_header(
+    ws: Worksheet,
+    header_rows: int,
+    widths: dict[str, float] | None = None,
+    row_height: float = cols.HEADER_ROW_HEIGHT,
+) -> None:
+    """Paint the header the way OPUS does - navy ground, white centred
+    Arial, wrapped, thin-boxed.
+
+    Not cosmetic: without it a MERGED header renders its label
+    left-aligned at the top-left of the span against a white ground, which
+    reads as a broken merge even though the ranges are right (that is what
+    "the merging is incorrect" turned out to mean). Every header cell on
+    every sheet of the reference carries this one style.
+
+    Applied across the merged cells too, not just their anchors: openpyxl
+    keeps the VALUE only in the top-left cell, but each covered cell still
+    draws its own fill and borders, so skipping them would leave white
+    gaps and missing box lines inside a span.
+    """
+    for row in range(1, header_rows + 1):
+        for col in range(1, ws.max_column + 1):
+            cell = ws.cell(row=row, column=col)
+            cell.fill = _HEADER_FILL
+            cell.font = _HEADER_FONT
+            cell.alignment = _HEADER_ALIGNMENT
+            cell.border = _HEADER_BORDER
+        ws.row_dimensions[row].height = row_height
+    for column_letter, width in (widths or {}).items():
+        ws.column_dimensions[column_letter].width = width
+
+
 def _write_two_row_header(
-    ws: Worksheet, group: list[str], field: list[str | None], merges: list[str]
+    ws: Worksheet,
+    group: list[str],
+    field: list[str | None],
+    merges: list[str],
+    widths: dict[str, float] | None = None,
 ) -> None:
     """Write a 2-row header with OPUS's own merged cells.
 
@@ -39,11 +83,12 @@ def _write_two_row_header(
     ws.append([f or "" for f in field])
     for merge_range in merges:
         ws.merge_cells(merge_range)
+    _style_header(ws, header_rows=2, widths=widths)
 
 
 def _write_rates_sheet(wb: Workbook, sheet_name: str, rows: list[RatesRow]) -> None:
     ws: Worksheet = wb.create_sheet(sheet_name)
-    _write_two_row_header(ws, cols.RATES_HEADER_GROUP, cols.RATES_HEADER_FIELD, cols.RATES_HEADER_MERGES)
+    _write_two_row_header(ws, cols.RATES_HEADER_GROUP, cols.RATES_HEADER_FIELD, cols.RATES_HEADER_MERGES, cols.RATES_COLUMN_WIDTHS)
     for row in rows:
         data = row.model_dump()
         ws.append([data[field_name] for field_name in cols.RATES_ROW_FIELDS])
@@ -51,7 +96,7 @@ def _write_rates_sheet(wb: Workbook, sheet_name: str, rows: list[RatesRow]) -> N
 
 def _write_vertical_rates_sheet(wb: Workbook, sheet_name: str, rows: list[VerticalRatesRow]) -> None:
     ws: Worksheet = wb.create_sheet(sheet_name)
-    _write_two_row_header(ws, cols.VERTICAL_RATES_HEADER_GROUP, cols.VERTICAL_RATES_HEADER_FIELD, cols.VERTICAL_RATES_HEADER_MERGES)
+    _write_two_row_header(ws, cols.VERTICAL_RATES_HEADER_GROUP, cols.VERTICAL_RATES_HEADER_FIELD, cols.VERTICAL_RATES_HEADER_MERGES, cols.VERTICAL_RATES_COLUMN_WIDTHS)
     for row in rows:
         data = row.model_dump()
         ws.append([data[field_name] for field_name in cols.VERTICAL_RATES_ROW_FIELDS])
@@ -60,6 +105,7 @@ def _write_vertical_rates_sheet(wb: Workbook, sheet_name: str, rows: list[Vertic
 def _write_arbs_sheet(wb: Workbook, sheet_name: str, rows: list[ArbsRow]) -> None:
     ws: Worksheet = wb.create_sheet(sheet_name)
     ws.append(cols.ARBS_HEADER)
+    _style_header(ws, header_rows=1, widths=cols.ARBS_COLUMN_WIDTHS, row_height=cols.ARBS_HEADER_ROW_HEIGHT)
     for row in rows:
         data = row.model_dump()
         ws.append([data[field_name] for field_name in cols.ARBS_ROW_FIELDS])
@@ -68,6 +114,7 @@ def _write_arbs_sheet(wb: Workbook, sheet_name: str, rows: list[ArbsRow]) -> Non
 def _write_cmdt_note_sheet(wb: Workbook, sheet_name: str, rows: list[CmdtNoteRow]) -> None:
     ws: Worksheet = wb.create_sheet(sheet_name)
     ws.append(cols.CMDT_NOTE_HEADER)
+    _style_header(ws, header_rows=1, widths=cols.CMDT_NOTE_COLUMN_WIDTHS)
     for row in rows:
         data = row.model_dump()
         ws.append([data[field_name] for field_name in cols.CMDT_NOTE_ROW_FIELDS])
@@ -78,6 +125,7 @@ def _write_special_note_sheet(wb: Workbook, sheet_name: str, rows: list[SpecialN
     # schema/opus_columns.py's SPECIAL_NOTE_HEADER comment.
     ws: Worksheet = wb.create_sheet(sheet_name)
     ws.append(cols.SPECIAL_NOTE_HEADER)
+    _style_header(ws, header_rows=1, widths=cols.SPECIAL_NOTE_COLUMN_WIDTHS)
     for row in rows:
         data = row.model_dump()
         ws.append([data[field_name] for field_name in cols.SPECIAL_NOTE_ROW_FIELDS])
@@ -86,6 +134,7 @@ def _write_special_note_sheet(wb: Workbook, sheet_name: str, rows: list[SpecialN
 def _write_route_note_sheet(wb: Workbook, sheet_name: str, rows: list[RouteNoteRow]) -> None:
     ws: Worksheet = wb.create_sheet(sheet_name)
     ws.append(cols.RN_HEADER)
+    _style_header(ws, header_rows=1, widths=cols.RN_COLUMN_WIDTHS)
     for row in rows:
         data = row.model_dump()
         ws.append([data[field_name] for field_name in cols.RN_ROW_FIELDS])
@@ -93,7 +142,7 @@ def _write_route_note_sheet(wb: Workbook, sheet_name: str, rows: list[RouteNoteR
 
 def _write_freetime_sheet(wb: Workbook, sheet_name: str, rows: list[FreetimeRow]) -> None:
     ws: Worksheet = wb.create_sheet(sheet_name)
-    _write_two_row_header(ws, cols.FREETIME_HEADER_GROUP, cols.FREETIME_HEADER_FIELD, cols.FREETIME_HEADER_MERGES)
+    _write_two_row_header(ws, cols.FREETIME_HEADER_GROUP, cols.FREETIME_HEADER_FIELD, cols.FREETIME_HEADER_MERGES, cols.FREETIME_COLUMN_WIDTHS)
     for row in rows:
         data = row.model_dump()
         # Blank, not absent: the header keeps its full width and each

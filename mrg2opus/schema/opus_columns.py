@@ -275,6 +275,57 @@ FREETIME_HEADER_MERGES = [
     "AO1:AO2", "AP1:AP2", "AQ1:AQ2", "AR1:AR2", "AS1:AT1",
 ]
 
+
+# --- Header styling ----------------------------------------------------------
+# Every header cell on every sheet of the user's OPUS HEADERS.xlsx carries
+# the SAME style, so one spec covers all of them. Without it a merged
+# header renders left-aligned against a white ground and reads as broken
+# even though the merge ranges themselves are right - which is what
+# "the merging is incorrect" turned out to mean (2026-09-05).
+HEADER_FILL_RGB = "FF27415D"
+HEADER_FONT_RGB = "FFFFFFFE"
+HEADER_FONT_NAME = "Arial"
+HEADER_FONT_SIZE = 10
+HEADER_ROW_HEIGHT = 26.1
+ARBS_HEADER_ROW_HEIGHT = 33.0  # O.ARBITRARY alone is taller
+
+# Column widths, per sheet, exactly as the reference sets them. Only the
+# columns it sizes explicitly are listed; the rest keep Excel's default.
+RATES_COLUMN_WIDTHS = {
+    "A": 18.0, "T": 9.0, "U": 18.0, "V": 9.0, "W": 18.0, "X": 9.0, "Y": 18.0, "Z": 9.0,
+    "AA": 18.0,
+}
+VERTICAL_RATES_COLUMN_WIDTHS = {"A": 15.0}
+CMDT_NOTE_COLUMN_WIDTHS = {
+    "A": 14.4, "C": 19.9, "D": 9.0, "E": 7.1, "F": 15.3, "H": 13.4, "I": 7.1, "J": 6.3,
+    "K": 13.4, "O": 6.3, "Q": 7.1, "R": 10.9, "T": 9.0, "U": 10.9, "W": 15.3, "X": 6.3,
+    "Y": 11.7, "AC": 14.4, "AD": 12.6, "AG": 16.1, "AI": 8.1, "AJ": 9.9, "AL": 19.9,
+}
+RN_COLUMN_WIDTHS = {
+    "A": 12.0, "D": 16.4, "E": 7.4, "F": 6.0, "G": 12.7, "I": 11.3, "J": 6.0, "K": 5.3,
+    "L": 11.3, "P": 5.3, "R": 6.0, "S": 9.0, "U": 7.4, "V": 9.0, "X": 12.7, "Y": 5.3,
+    "Z": 9.7, "AD": 12.0, "AE": 10.4, "AH": 13.4, "AJ": 6.7, "AK": 8.3, "AM": 16.4,
+    "AO": 9.7,
+}
+SPECIAL_NOTE_COLUMN_WIDTHS = {
+    "A": 12.0, "C": 16.4, "D": 7.4, "F": 12.0, "G": 12.7, "I": 8.3, "J": 5.3, "K": 11.3,
+    "L": 12.0, "N": 13.4, "O": 6.7, "P": 6.0, "R": 9.0, "T": 7.4, "U": 9.0, "W": 13.4,
+    "X": 5.3, "Y": 11.3, "AC": 12.0, "AD": 10.4, "AG": 13.4, "AI": 6.7, "AJ": 8.3,
+    "AK": 9.0, "AL": 16.4,
+}
+ARBS_COLUMN_WIDTHS = {
+    "A": 7.4, "B": 8.6, "C": 25.4, "D": 10.4, "E": 8.3, "H": 13.4, "J": 8.6, "L": 10.4,
+    "M": 15.0, "N": 5.7, "P": 6.4, "Q": 15.0, "R": 10.1, "T": 12.0, "V": 10.4, "W": 12.0,
+    "X": 6.0, "Y": 45.0, "Z": 27.0,
+}
+FREETIME_COLUMN_WIDTHS = {
+    "A": 5.6, "B": 12.0, "C": 9.0, "D": 6.0, "E": 10.4, "G": 18.0, "H": 12.0, "J": 4.4,
+    "K": 5.3, "L": 9.0, "M": 6.0, "N": 4.4, "O": 5.3, "P": 4.4, "R": 6.7, "S": 4.4,
+    "U": 5.3, "V": 9.0, "W": 4.4, "X": 5.3, "Y": 9.0, "AA": 24.0, "AB": 9.0, "AD": 5.4,
+    "AG": 9.7, "AK": 5.4, "AM": 6.7, "AN": 24.0, "AO": 15.0, "AP": 4.4, "AQ": 15.0,
+    "AR": 12.0, "AS": 9.0, "AT": 24.0,
+}
+
 # --- Legacy bundled-sample sheet names ---------------------------------------
 # These match the literal sheet names inside the older, hand-prepared
 # "Sample MRGs with OPUS FORMATS/*.xlsx" fixtures every tests/test_parsers_*.py
