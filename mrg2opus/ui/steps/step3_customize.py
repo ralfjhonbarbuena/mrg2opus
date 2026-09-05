@@ -10,7 +10,22 @@ from mrg2opus.ui.parsing import run_parser
 from mrg2opus.ui.sheets import output_sheets
 from mrg2opus.ui.state import WizardState
 
-_EDITOR_KEY = "commodity_overrides_editor"
+_EDITOR_KEY_BASE = "commodity_overrides_editor"
+_EDITOR_NONCE = "commodity_overrides_editor_nonce"
+
+
+def _editor_key() -> str:
+    """The grid's widget key, carrying a nonce that Refresh bumps.
+
+    Changing the KEY is what actually resets st.data_editor. Popping
+    st.session_state[key] - the obvious move, and what this did at first -
+    looks right and does nothing: the grid's edits live in frontend state
+    tied to the widget's identity, so it just repopulates the key and the
+    edits stay on screen. A key it has never seen is a brand-new widget,
+    which is drawn from the DataFrame we pass rather than from any
+    retained state.
+    """
+    return f"{_EDITOR_KEY_BASE}_{st.session_state.get(_EDITOR_NONCE, 0)}"
 
 
 def _refresh_editor() -> None:
@@ -24,12 +39,10 @@ def _refresh_editor() -> None:
     group's default on Apply - but Refresh puts the default back on screen
     so it can be read.
 
-    Runs as a button CALLBACK, which is what makes popping the key legal:
-    callbacks fire before the next run builds its widgets, so the editor
-    is recreated from scratch rather than having its key yanked out from
-    under a live widget.
+    A button CALLBACK, so it runs before the next run builds its widgets
+    and the grid is created under the new key straight away.
     """
-    st.session_state.pop(_EDITOR_KEY, None)
+    st.session_state[_EDITOR_NONCE] = st.session_state.get(_EDITOR_NONCE, 0) + 1
 
 
 def render(state: WizardState) -> None:
@@ -144,7 +157,7 @@ def render(state: WizardState) -> None:
                     help="Keep the group, but don't file a D/DG duplicate of its base Dry rows.",
                 ),
             },
-            key=_EDITOR_KEY,
+            key=_editor_key(),
         )
     else:
         edited, row_keys = [], []
