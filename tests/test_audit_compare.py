@@ -5,6 +5,7 @@ import io
 import openpyxl
 
 from mrg2opus.audit.compare import (
+    AUDIT_CONCAT_FIELDS,
     RATES_PRESENTATION_FIELDS,
     arbs_row_key,
     audit_concat,
@@ -385,8 +386,9 @@ def test_side_by_side_pairs_each_sheet_and_points_the_lookups_at_each_other():
 
     ours = wb["RATES (ours)"]
     assert ours["A1"].value == "MATCH KEY"
-    assert ours["A2"].value.startswith("CNSHA|")
-    # a live formula, not a baked answer, so it re-evaluates after an edit
+    # BOTH columns are live formulas, not baked answers, so they
+    # re-evaluate after an edit to either sheet.
+    assert ours["A2"].value.startswith('=TEXTJOIN("|",FALSE,')
     assert ours["B2"].value.startswith("=XLOOKUP(") and "'RATES (ref)'" in ours["B2"].value
     assert "'RATES (ours)'" in wb["RATES (ref)"]["B2"].value
 
@@ -403,3 +405,30 @@ def test_a_long_sheet_label_is_trimmed_to_excels_limit():
     rows = [dict.fromkeys(cols.RATES_ROW_FIELDS)]
     wb = openpyxl.load_workbook(io.BytesIO(build_side_by_side_workbook([("X" * 40, rows, rows)])))
     assert all(len(name) <= 31 for name in wb.sheetnames)
+
+
+def test_the_match_key_formula_points_at_this_row_and_covers_the_concat():
+    rows = [dict.fromkeys(cols.RATES_ROW_FIELDS)]
+    wb = openpyxl.load_workbook(io.BytesIO(build_side_by_side_workbook([("RATES", rows, rows)])))
+    formula = wb["RATES (ours)"]["A2"].value
+
+    # one reference per concat field, all on row 2, none on the key or
+    # lookup columns themselves
+    refs = formula.removeprefix('=TEXTJOIN("|",FALSE,').removesuffix(")").split(",")
+    assert len(refs) == len(AUDIT_CONCAT_FIELDS)
+    assert all(ref.endswith("2") for ref in refs)
+    # not the key or lookup columns themselves - compared as whole column
+    # letters, since "AA" also starts with "A"
+    assert not {ref.rstrip("0123456789") for ref in refs} & {"A", "B"}
+
+
+def test_the_rate_columns_are_part_of_the_key_formula():
+    """The audit's own concat includes the whole Rate section, so a wrong
+    rate has to fail the lookup rather than match."""
+    rows = [dict.fromkeys(cols.RATES_ROW_FIELDS)]
+    wb = openpyxl.load_workbook(io.BytesIO(build_side_by_side_workbook([("RATES", rows, rows)])))
+    formula = wb["RATES (ours)"]["A2"].value
+
+    from openpyxl.utils import get_column_letter
+    rate_col = get_column_letter(3 + cols.RATES_ROW_FIELDS.index("rate_20"))
+    assert f"{rate_col}2" in formula

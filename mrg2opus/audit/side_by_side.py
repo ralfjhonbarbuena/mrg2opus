@@ -18,12 +18,15 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from mrg2opus.audit.compare import AUDIT_CONCAT_FIELDS, audit_concat
+from mrg2opus.audit.compare import AUDIT_CONCAT_FIELDS
 from mrg2opus.schema import opus_columns as cols
 
 # Excel's own cap; a scoped port-port pair ("RATES-OEW PORT-PORT (ref)")
 # runs to 25, so this only ever bites on an unusually long sub-lane name.
 _MAX_SHEET_NAME = 31
+
+# Column A is the key, B the lookup, so the data starts at C.
+_DATA_START_COLUMN = 3
 
 _KEY_HEADER = "MATCH KEY"
 _STATUS_HEADER = "IN THE OTHER DRAFT?"
@@ -43,6 +46,28 @@ def _readable_headers() -> list[str]:
         field_label = (field or "").replace("\n", " ").strip()
         headers.append(f"{group_label} {field_label}".strip() if field_label else group_label)
     return headers
+
+
+def _concat_formula(excel_row: int) -> str:
+    """The match key as a live CONCATENATE over the row's own cells.
+
+    A formula rather than a value for the same reason column B is one:
+    edit a rate or a term in either sheet and the key - and the lookup
+    that reads it - recompute, instead of silently describing the row as
+    it was when the file was written.
+
+    TEXTJOIN with ignore_empty FALSE keeps blank positions, so the
+    separators still line up across rows. It also settles a difference
+    Excel would otherwise create: a rate held as 5800 on one sheet and
+    5800.0 on the other renders "5800" both times here, where building
+    the string in Python gives "5800" and "5800.0" and the two rows fail
+    to match each other.
+    """
+    refs = ",".join(
+        f"{get_column_letter(_DATA_START_COLUMN + cols.RATES_ROW_FIELDS.index(field))}{excel_row}"
+        for field in AUDIT_CONCAT_FIELDS
+    )
+    return f'=TEXTJOIN("|",FALSE,{refs})'
 
 
 def _sheet_name(base: str, side: str) -> str:
@@ -67,7 +92,7 @@ def _write_side(wb: Workbook, title: str, rows: list[dict], other_title: str, ot
             f"=XLOOKUP($A{i},'{quoted}'!$A:$A,'{quoted}'!$A:$A,\"NOT IN {other_label}\")"
         )
         ws.append([
-            audit_concat(row), lookup,
+            _concat_formula(i), lookup,
             *[row.get(field) for field in cols.RATES_ROW_FIELDS],
         ])
         ws.cell(row=i, column=1).fill = _KEY_FILL
@@ -89,17 +114,23 @@ def build_side_by_side_workbook(pairs: list[tuple[str, list[dict], list[dict]]])
     for line in (
         ["Both drafts, one workbook - reconcile them the way the audit already does."],
         [],
-        ["MATCH KEY (column A) is the CONCATENATE, already built:"],
+        ["MATCH KEY (column A) is the CONCATENATE, over this row's own cells:"],
         ["  " + " | ".join(AUDIT_CONCAT_FIELDS)],
         [],
-        ["IN THE OTHER DRAFT? (column B) is a live XLOOKUP against the paired sheet."],
+        ["IN THE OTHER DRAFT? (column B) is an XLOOKUP against the paired sheet."],
         ["  It returns the key when the row is found, or NOT IN ... when it isn't."],
-        ["  Both columns re-evaluate if you edit either sheet."],
         [],
-        ["A row present on both sheets but with a different rate WILL match on the key:"],
-        ["  the key deliberately leaves the rate values out, so a rate error shows up as"],
-        ["  a matched row whose rate columns differ, not as a row that went missing."],
-        ["  Compare the rate columns directly, or use the on-screen substance list."],
+        ["Both are live formulas, not saved answers: edit a rate or a term on either"],
+        ["sheet and the key rebuilds and the lookup re-runs."],
+        [],
+        ["The key INCLUDES the rate section, so a row whose rate differs does not match:"],
+        ["  it reads NOT IN ... on both sheets, once as your row and once as theirs."],
+        ["  That is the same behaviour as concatenating by hand."],
+        [],
+        ["The on-screen comparison deliberately does the opposite - it matches WITHOUT"],
+        ["the rates, so it can name the route and say which rate column differs, rather"],
+        ["than reporting one row missing and another extra. Use this sheet to find that"],
+        ["a row disagrees; use the on-screen substance list to see what disagrees."],
     ):
         notes.append(line)
     notes.column_dimensions["A"].width = 100
