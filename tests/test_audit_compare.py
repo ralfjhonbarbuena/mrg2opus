@@ -379,7 +379,7 @@ def test_freetime_skips_the_columns_we_deliberately_leave_blank():
 
 def test_side_by_side_pairs_each_sheet_and_points_the_lookups_at_each_other():
     rows = [dict.fromkeys(cols.RATES_ROW_FIELDS) | {"origin_code": "CNSHA", "rate_20": 100}]
-    data = build_side_by_side_workbook([("RATES", rows, rows)])
+    data = build_side_by_side_workbook([("RATES", "RATES", rows, rows)])
 
     wb = openpyxl.load_workbook(io.BytesIO(data))
     assert wb.sheetnames == ["HOW TO USE", "RATES (ours)", "RATES (ref)"]
@@ -397,19 +397,19 @@ def test_side_by_side_writes_an_empty_reference_side_rather_than_omitting_it():
     """LAWC files no VERTICAL RATES at all; the pairing should still be
     visible instead of the sheet quietly missing."""
     rows = [dict.fromkeys(cols.RATES_ROW_FIELDS) | {"origin_code": "CNSHA"}]
-    wb = openpyxl.load_workbook(io.BytesIO(build_side_by_side_workbook([("RATES", rows, [])])))
+    wb = openpyxl.load_workbook(io.BytesIO(build_side_by_side_workbook([("RATES", "RATES", rows, [])])))
     assert wb["RATES (ref)"].max_row == 1  # header only
 
 
 def test_a_long_sheet_label_is_trimmed_to_excels_limit():
     rows = [dict.fromkeys(cols.RATES_ROW_FIELDS)]
-    wb = openpyxl.load_workbook(io.BytesIO(build_side_by_side_workbook([("X" * 40, rows, rows)])))
+    wb = openpyxl.load_workbook(io.BytesIO(build_side_by_side_workbook([("RATES", "X" * 40, rows, rows)])))
     assert all(len(name) <= 31 for name in wb.sheetnames)
 
 
 def test_the_match_key_formula_points_at_this_row_and_covers_the_concat():
     rows = [dict.fromkeys(cols.RATES_ROW_FIELDS)]
-    wb = openpyxl.load_workbook(io.BytesIO(build_side_by_side_workbook([("RATES", rows, rows)])))
+    wb = openpyxl.load_workbook(io.BytesIO(build_side_by_side_workbook([("RATES", "RATES", rows, rows)])))
     formula = wb["RATES (ours)"]["A2"].value
 
     # one reference per concat field, all on row 2, none on the key or
@@ -426,7 +426,7 @@ def test_the_rate_columns_are_part_of_the_key_formula():
     """The audit's own concat includes the whole Rate section, so a wrong
     rate has to fail the lookup rather than match."""
     rows = [dict.fromkeys(cols.RATES_ROW_FIELDS)]
-    wb = openpyxl.load_workbook(io.BytesIO(build_side_by_side_workbook([("RATES", rows, rows)])))
+    wb = openpyxl.load_workbook(io.BytesIO(build_side_by_side_workbook([("RATES", "RATES", rows, rows)])))
     formula = wb["RATES (ours)"]["A2"].value
 
     from openpyxl.utils import get_column_letter
@@ -442,7 +442,7 @@ def test_the_workbook_asks_excel_to_calculate_on_open():
     import zipfile
 
     rows = [dict.fromkeys(cols.RATES_ROW_FIELDS)]
-    data = build_side_by_side_workbook([("RATES", rows, rows)])
+    data = build_side_by_side_workbook([("RATES", "RATES", rows, rows)])
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         book = archive.read("xl/workbook.xml").decode()
     assert re.search(r'<calcPr[^>]*fullCalcOnLoad="1"', book)
@@ -458,7 +458,7 @@ def test_post_spec_functions_carry_the_prefix_excel_needs_in_a_file():
     import zipfile
 
     rows = [dict.fromkeys(cols.RATES_ROW_FIELDS)]
-    data = build_side_by_side_workbook([("RATES", rows, rows)])
+    data = build_side_by_side_workbook([("RATES", "RATES", rows, rows)])
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         sheet = archive.read("xl/worksheets/sheet2.xml").decode()
 
@@ -466,3 +466,43 @@ def test_post_spec_functions_carry_the_prefix_excel_needs_in_a_file():
     assert "TEXTJOIN" not in sheet
     # no bare XLOOKUP anywhere once the prefixed ones are removed
     assert "XLOOKUP" not in sheet.replace("_xlfn.XLOOKUP", "")
+
+
+def test_every_sheet_type_has_a_layout_and_a_key():
+    """Each sheet has its own columns, so one hardcoded RATES layout
+    cannot serve them - a note sheet written with rate columns would be
+    silently wrong rather than obviously so."""
+    from mrg2opus.audit.side_by_side import SHEET_SPECS
+
+    for sheet_type, spec in SHEET_SPECS.items():
+        assert spec.headers and len(spec.headers) == len(spec.row_fields), sheet_type
+        assert spec.key_fields, sheet_type
+        # every key field is a real column on that sheet, or the formula
+        # would reference a column that isn't there
+        assert set(spec.key_fields) <= set(spec.row_fields), sheet_type
+
+
+def test_sequence_numbers_are_never_part_of_a_key():
+    """OPUS assigns them and neither draft controls them, so including one
+    would fail every row on the sheet."""
+    from mrg2opus.audit.side_by_side import SHEET_SPECS
+
+    for sheet_type, spec in SHEET_SPECS.items():
+        assert not {"cmdt_seq", "route_seq", "header_seq", "note_seq"} & set(spec.key_fields), sheet_type
+
+
+def test_a_note_sheet_is_written_with_its_own_columns():
+    rows = [dict.fromkeys(cols.CMDT_NOTE_ROW_FIELDS) | {"contents": "Rates are valid...", "code": "APP"}]
+    wb = openpyxl.load_workbook(io.BytesIO(
+        build_side_by_side_workbook([("CMDT NOTE", "CMDT NOTE", rows, rows)])
+    ))
+    ws = wb["CMDT NOTE (ours)"]
+    assert ws.max_column == len(cols.CMDT_NOTE_ROW_FIELDS) + 2
+    assert ws["C1"].value == "Header Seq"
+
+
+def test_an_unknown_sheet_type_is_skipped_not_written_with_the_wrong_columns():
+    wb = openpyxl.load_workbook(io.BytesIO(
+        build_side_by_side_workbook([("NOT A SHEET", "X", [{}], [{}])])
+    ))
+    assert wb.sheetnames == ["HOW TO USE"]

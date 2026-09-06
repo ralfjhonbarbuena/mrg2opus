@@ -351,12 +351,12 @@ def _compare_freetime_sheet(suffix, sheet_name, generated, ref_wb) -> dict | Non
     )
 
 
-def _read_or_empty(ref_wb: Workbook, sheet_name: str) -> list[dict]:
+def _read_or_empty(ref_wb: Workbook, sheet_name: str, reader) -> list[dict]:
     """The reference may simply not carry a sheet (LAWC files no VERTICAL
     RATES); an empty side is still worth writing, so the pairing is
     visible rather than the sheet silently absent."""
     try:
-        return read_rates_sheet(ref_wb, sheet_name)
+        return reader(ref_wb, sheet_name)
     except KeyError:
         return []
 
@@ -416,14 +416,17 @@ def _run_comparison(
                 duplicates.append({
                     "sheet": f"{label}{tag_for(suffix)}", "count": count, "row": concat,
                 })
+        # scoped keeps the sub-lane in the name ("RATES-OEW"); names is
+        # what actually exists in the reference. The workbook is labelled
+        # from scoped so two sub-lanes never collide on one tab name.
         scoped = resolve_sheet_names(suffix, sheet_name_overrides, scoped_sheet_name_overrides)
         plain = resolve_sheet_names("", sheet_name_overrides, scoped_sheet_name_overrides)
         names = {k: _pick_sheet_name(ref_wb, scoped[k], plain[k]) for k in scoped}
         if want_grouped:
             side_by_side.append((
-                names["rates"],
+                "RATES", scoped["rates"],
                 [x.model_dump() for x in row_set.rates],
-                _read_or_empty(ref_wb, names["rates"]),
+                _read_or_empty(ref_wb, names["rates"], read_rates_sheet),
             ))
             r = _compare_keyed_sheet(
                 "RATES", suffix, names["rates"],
@@ -435,9 +438,9 @@ def _run_comparison(
                 results.append(r)
         if want_exploded:
             side_by_side.append((
-                names["rates_port_port"],
+                "RATES PORT-PORT", scoped["rates_port_port"],
                 [x.model_dump() for x in row_set.rates_port_port],
-                _read_or_empty(ref_wb, names["rates_port_port"]),
+                _read_or_empty(ref_wb, names["rates_port_port"], read_rates_sheet),
             ))
             r = _compare_keyed_sheet(
                 "RATES PORT-PORT", suffix, names["rates_port_port"],
@@ -447,6 +450,12 @@ def _run_comparison(
             )
             if r is not None:
                 results.append(r)
+        if "ORIGIN ARBS" not in skip_sheets:
+            side_by_side.append((
+                "ARBS", scoped["arbs"],
+                [x.model_dump() for x in row_set.arbs],
+                _read_or_empty(ref_wb, names["arbs"], read_arbs_sheet),
+            ))
         r = None if "ORIGIN ARBS" in skip_sheets else _compare_keyed_sheet(
             "ARBS", suffix, names["arbs"],
             [x.model_dump() for x in row_set.arbs], ref_wb,
@@ -454,6 +463,12 @@ def _run_comparison(
         )
         if r is not None:
             results.append(r)
+        if "CMDT NOTE" not in skip_sheets:
+            side_by_side.append((
+                "CMDT NOTE", scoped["cmdt_notes"],
+                [x.model_dump() for x in row_set.cmdt_notes],
+                _read_or_empty(ref_wb, names["cmdt_notes"], read_cmdt_note_sheet),
+            ))
         r = None if "CMDT NOTE" in skip_sheets else _compare_block_sheet(
             "CMDT NOTE", suffix, names["cmdt_notes"],
             [x.model_dump() for x in row_set.cmdt_notes], ref_wb,
@@ -462,6 +477,12 @@ def _run_comparison(
         )
         if r is not None:
             results.append(r)
+        if "SPECIAL NOTE" not in skip_sheets:
+            side_by_side.append((
+                "SPECIAL NOTE", scoped["special_notes"],
+                [x.model_dump() for x in row_set.special_notes],
+                _read_or_empty(ref_wb, names["special_notes"], read_special_note_sheet),
+            ))
         r = None if "SPECIAL NOTE" in skip_sheets else _compare_block_sheet(
             "SPECIAL NOTE", suffix, names["special_notes"],
             [x.model_dump() for x in row_set.special_notes], ref_wb,
@@ -471,17 +492,34 @@ def _run_comparison(
         if r is not None:
             results.append(r)
         if "ROUTE NOTE" not in skip_sheets:
+            side_by_side.append((
+                "ROUTE NOTE", scoped["route_notes"],
+                [x.model_dump() for x in row_set.route_notes],
+                _read_or_empty(ref_wb, names["route_notes"], read_route_note_sheet),
+            ))
             r = _compare_route_note_sheet(suffix, names["route_notes"], row_set.route_notes, ref_wb)
             if r is not None:
                 results.append(r)
         if "VERTICAL RATES" not in skip_sheets:
+            side_by_side.append((
+                "VERTICAL RATES", scoped["vertical_rates"],
+                [x.model_dump() for x in row_set.vertical_rates],
+                _read_or_empty(ref_wb, names["vertical_rates"], read_vertical_rates_sheet),
+            ))
             r = _compare_vertical_rates_sheet(suffix, names["vertical_rates"], row_set.vertical_rates, ref_wb)
             if r is not None:
                 results.append(r)
         if "FREETIME" not in skip_sheets:
+            side_by_side.append((
+                "FREETIME", scoped["freetime"],
+                [x.model_dump() for x in row_set.freetime],
+                _read_or_empty(ref_wb, names["freetime"], read_freetime_sheet),
+            ))
             r = _compare_freetime_sheet(suffix, names["freetime"], row_set.freetime, ref_wb)
             if r is not None:
                 results.append(r)
+    # A sheet neither draft carries would just be two empty tabs.
+    side_by_side = [p for p in side_by_side if p[2] or p[3]]
     return results, duplicates, side_by_side
 
 
