@@ -95,9 +95,23 @@ Known ground-truth inconsistencies in this one filing, all filing-prep
 artifacts rather than derivable rules (each verified, each handled by
 running the affected scope with its own MappingProfile in the tests):
 the DG duplicate toggle was ON for the main AEW/AMW scopes but OFF for
-the Japan ones, and the RFA child-date window differs three ways (AEW
-2026-08-30, AMW 2026-08-19, Japan-AEW using the plain validity window and
-Japan-AMW 2026-08-30) even though both are single filing-wide settings.
+the Japan ones (answered per scope now - see
+MappingProfile.files_tad_dg), and the RFA child-date window differs three
+ways (AEW 2026-08-30, AMW 2026-08-19, Japan-AEW using the plain validity
+window and Japan-AMW 2026-08-30) even though both are single filing-wide
+settings.
+
+KNOWN GAP, left open deliberately (user-directed, 2026-09-06): the two
+Japan scopes file the SAME commodity group under different codes -
+Japan-AEW as G0011, Japan-AMW as G0001 - and we cannot reproduce that.
+Every commodity setting (code, description, CMDT seq, order, Skip Filing,
+Skip DG) is keyed by the group's default description, which here spans
+both scopes, so they necessarily share one code. Filing-wide settings
+diverging per scope is the same shape as the two inconsistencies above,
+and JAPAN POLLY is the VBA tool mid-pipeline rather than a finished
+filing, so this is likelier a filing-prep artifact than a rule. Making it
+settable would mean a per-scope override layer merged in before each
+scope is built - decided not worth it for one artifact in one file.
 """
 from __future__ import annotations
 
