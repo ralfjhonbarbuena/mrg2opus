@@ -49,6 +49,7 @@ from mrg2opus.audit.compare import (
     route_note_counts,
     split_mismatches_by_tier,
 )
+from mrg2opus.audit.side_by_side import build_side_by_side_workbook
 from mrg2opus.excel_io.merge import DuplicateSheetError
 from mrg2opus.excel_io.writer import resolve_sheet_names
 from mrg2opus.parsers.registry import ClassificationResult, get_profile
@@ -91,6 +92,8 @@ class CompareState:
     explained_overrides: dict[str, str] = field(default_factory=dict)
     # Rows filed twice - OPUS rejects them, so the audit confirms absence.
     duplicate_filings: list[dict[str, Any]] = field(default_factory=list)
+    # (sheet label, our rows, the reference's rows) for the paired workbook.
+    side_by_side: list[tuple] = field(default_factory=list)
     # (lane_id, rates_mode, apply_known_gaps, use_wizard_profile) at the moment compare_results
     # was computed - lets render() detect when the visible results no
     # longer match the current control settings, instead of silently
@@ -339,6 +342,16 @@ def _compare_freetime_sheet(suffix, sheet_name, generated, ref_wb) -> dict | Non
     )
 
 
+def _read_or_empty(ref_wb: Workbook, sheet_name: str) -> list[dict]:
+    """The reference may simply not carry a sheet (LAWC files no VERTICAL
+    RATES); an empty side is still worth writing, so the pairing is
+    visible rather than the sheet silently absent."""
+    try:
+        return read_rates_sheet(ref_wb, sheet_name)
+    except KeyError:
+        return []
+
+
 def tag_for(suffix: str) -> str:
     return f"-{suffix}" if suffix else ""
 
@@ -384,6 +397,7 @@ def _run_comparison(
 
     results: list[dict] = []
     duplicates: list[dict] = []
+    side_by_side: list[tuple] = []
     for suffix, row_set in row_sets.items():
         # Part of the audit in its own right: OPUS rejects a filing that
         # carries the same route twice, so it has to be confirmed absent
@@ -397,6 +411,11 @@ def _run_comparison(
         plain = resolve_sheet_names("", sheet_name_overrides, scoped_sheet_name_overrides)
         names = {k: _pick_sheet_name(ref_wb, scoped[k], plain[k]) for k in scoped}
         if want_grouped:
+            side_by_side.append((
+                names["rates"],
+                [x.model_dump() for x in row_set.rates],
+                _read_or_empty(ref_wb, names["rates"]),
+            ))
             r = _compare_keyed_sheet(
                 "RATES", suffix, names["rates"],
                 [x.model_dump() for x in row_set.rates], ref_wb,
@@ -406,6 +425,11 @@ def _run_comparison(
             if r is not None:
                 results.append(r)
         if want_exploded:
+            side_by_side.append((
+                names["rates_port_port"],
+                [x.model_dump() for x in row_set.rates_port_port],
+                _read_or_empty(ref_wb, names["rates_port_port"]),
+            ))
             r = _compare_keyed_sheet(
                 "RATES PORT-PORT", suffix, names["rates_port_port"],
                 [x.model_dump() for x in row_set.rates_port_port], ref_wb,
@@ -449,7 +473,7 @@ def _run_comparison(
             r = _compare_freetime_sheet(suffix, names["freetime"], row_set.freetime, ref_wb)
             if r is not None:
                 results.append(r)
-    return results, duplicates
+    return results, duplicates, side_by_side
 
 
 _DETAIL_ROW_LIMIT = 50
@@ -522,7 +546,8 @@ def _render_detail_table(label: str, rows: list[dict], key: str) -> None:
 
 
 def _render_results(results: list[dict], explained_overrides: dict[str, str],
-                    duplicate_filings: list[dict] | None = None) -> None:
+                    duplicate_filings: list[dict] | None = None,
+                    side_by_side: list[tuple] | None = None) -> None:
     if not results:
         st.info("Nothing to compare - the parsed MRG produced no rows for the sheet type(s) selected.")
         return
@@ -557,6 +582,19 @@ def _render_results(results: list[dict], explained_overrides: dict[str, str],
             "Every route matched and every rate agrees. "
             + (f"The {presentation} remaining differences are all in fields you control or the writer assigns."
                if presentation else "No differences at all.")
+        )
+
+    if side_by_side:
+        st.download_button(
+            "⬇ Download both drafts side by side (.xlsx)",
+            data=build_side_by_side_workbook(side_by_side),
+            file_name="mrg2opus_side_by_side.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help=(
+                "Your draft and the reference in one workbook, a sheet each, with the "
+                "CONCATENATE already built in column A and a live XLOOKUP against the other "
+                "sheet in column B - to reconcile them by hand the way the audit already does."
+            ),
         )
 
     if duplicate_filings:
@@ -758,7 +796,7 @@ def render() -> None:
             state.row_sets = run_parser(parser, state.workbook, profile)
             skipped_keys = _skipped_row_keys(parser, state.workbook, profile)
         state.explained_overrides = explain_profile_overrides(profile)
-        state.compare_results, state.duplicate_filings = _run_comparison(
+        state.compare_results, state.duplicate_filings, state.side_by_side = _run_comparison(
             state.row_sets, state.reference_workbook, state.rates_mode,
             state.selected_lane_id, state.apply_known_gaps, skipped_keys,
             frozenset(state.skip_sheets),
@@ -772,4 +810,5 @@ def render() -> None:
                 "⚠️ Lane, RATES mode, the known-gaps toggle, the profile choice or the skipped sheets "
                 "changed since this comparison ran - click **Run Comparison** to refresh before trusting these results."
             )
-        _render_results(state.compare_results, state.explained_overrides, state.duplicate_filings)
+        _render_results(state.compare_results, state.explained_overrides,
+                        state.duplicate_filings, state.side_by_side)

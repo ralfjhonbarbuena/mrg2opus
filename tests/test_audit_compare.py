@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+
 import openpyxl
 
 from mrg2opus.audit.compare import (
@@ -22,6 +24,7 @@ from mrg2opus.audit.compare import (
     route_note_counts,
     split_mismatches_by_tier,
 )
+from mrg2opus.audit.side_by_side import build_side_by_side_workbook
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema import opus_columns as cols
 
@@ -369,3 +372,34 @@ def test_freetime_skips_the_columns_we_deliberately_leave_blank():
     compared = freetime_compared_fields()
     assert "rfa_no" not in compared and "status" not in compared and "dar_no" not in compared
     assert "tariff" in compared and "free_time_total" in compared
+
+
+# --- the side-by-side workbook ----------------------------------------------
+
+def test_side_by_side_pairs_each_sheet_and_points_the_lookups_at_each_other():
+    rows = [dict.fromkeys(cols.RATES_ROW_FIELDS) | {"origin_code": "CNSHA", "rate_20": 100}]
+    data = build_side_by_side_workbook([("RATES", rows, rows)])
+
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    assert wb.sheetnames == ["HOW TO USE", "RATES (ours)", "RATES (ref)"]
+
+    ours = wb["RATES (ours)"]
+    assert ours["A1"].value == "MATCH KEY"
+    assert ours["A2"].value.startswith("CNSHA|")
+    # a live formula, not a baked answer, so it re-evaluates after an edit
+    assert ours["B2"].value.startswith("=XLOOKUP(") and "'RATES (ref)'" in ours["B2"].value
+    assert "'RATES (ours)'" in wb["RATES (ref)"]["B2"].value
+
+
+def test_side_by_side_writes_an_empty_reference_side_rather_than_omitting_it():
+    """LAWC files no VERTICAL RATES at all; the pairing should still be
+    visible instead of the sheet quietly missing."""
+    rows = [dict.fromkeys(cols.RATES_ROW_FIELDS) | {"origin_code": "CNSHA"}]
+    wb = openpyxl.load_workbook(io.BytesIO(build_side_by_side_workbook([("RATES", rows, [])])))
+    assert wb["RATES (ref)"].max_row == 1  # header only
+
+
+def test_a_long_sheet_label_is_trimmed_to_excels_limit():
+    rows = [dict.fromkeys(cols.RATES_ROW_FIELDS)]
+    wb = openpyxl.load_workbook(io.BytesIO(build_side_by_side_workbook([("X" * 40, rows, rows)])))
+    assert all(len(name) <= 31 for name in wb.sheetnames)

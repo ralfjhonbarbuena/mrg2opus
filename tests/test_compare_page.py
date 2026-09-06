@@ -41,7 +41,7 @@ def test_run_comparison_matches_identical_rates_row():
         ref_row[cols.RATES_ROW_FIELDS.index(field_name)] = value
     ref_wb = _reference_workbook_with_rates_sheet([ref_row])
 
-    results, _duplicates = _run_comparison(row_sets, ref_wb, "Both", "SAF")
+    results, _duplicates, _pairs = _run_comparison(row_sets, ref_wb, "Both", "SAF")
     rates_result = next(r for r in results if r["sheet_type"] == "RATES")
     assert rates_result["found_in_reference"] is True
     assert rates_result["matched"] == 1
@@ -55,7 +55,7 @@ def test_run_comparison_reports_missing_sheet_as_all_extra():
     ref_wb = openpyxl.Workbook()
     ref_wb.active.title = "Unrelated Sheet"
 
-    results, _duplicates = _run_comparison(row_sets, ref_wb, "Grouped (RATES)", "SAF")
+    results, _duplicates, _pairs = _run_comparison(row_sets, ref_wb, "Grouped (RATES)", "SAF")
     rates_result = next(r for r in results if r["sheet_type"] == "RATES")
     assert rates_result["found_in_reference"] is False
     assert len(rates_result["extra"]) == 1
@@ -68,7 +68,7 @@ def test_run_comparison_respects_rates_mode_grouped_only():
     ref_wb = openpyxl.Workbook()
     ref_wb.active.title = "Unrelated Sheet"
 
-    results, _duplicates = _run_comparison(row_sets, ref_wb, "Grouped (RATES)", "SAF")
+    results, _duplicates, _pairs = _run_comparison(row_sets, ref_wb, "Grouped (RATES)", "SAF")
     sheet_types = {r["sheet_type"] for r in results}
     assert sheet_types == {"RATES"}
 
@@ -80,6 +80,6 @@ def test_run_comparison_both_mode_includes_grouped_and_exploded():
     ref_wb = openpyxl.Workbook()
     ref_wb.active.title = "Unrelated Sheet"
 
-    results, _duplicates = _run_comparison(row_sets, ref_wb, "Both", "SAF")
+    results, _duplicates, _pairs = _run_comparison(row_sets, ref_wb, "Both", "SAF")
     sheet_types = {r["sheet_type"] for r in results}
     assert sheet_types == {"RATES", "RATES PORT-PORT"}
