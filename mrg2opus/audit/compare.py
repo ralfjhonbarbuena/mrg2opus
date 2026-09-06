@@ -312,8 +312,16 @@ def profile_without_row_skips(profile):
     exactly which rows the user chose to drop, so the two can be told
     apart. Everything else on the profile is left alone: the point is to
     isolate the skips, not to compare against a default parse.
+
+    The False entries stay. They skip nothing - and for a reefer or NOR
+    group an explicit False is what ADDS rows (see
+    parsers/common/dg_twins.py), so dropping it would make this parse
+    smaller than the real one instead of larger.
     """
-    return profile.model_copy(update={"skip_commodity_filing": {}, "skip_dg_generation": {}})
+    return profile.model_copy(update={
+        "skip_commodity_filing": {k: v for k, v in profile.skip_commodity_filing.items() if not v},
+        "skip_dg_generation": {k: v for k, v in profile.skip_dg_generation.items() if not v},
+    })
 
 
 def profile_skips_rows(profile) -> bool:

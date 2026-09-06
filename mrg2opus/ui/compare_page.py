@@ -52,6 +52,7 @@ from mrg2opus.audit.compare import (
 from mrg2opus.audit.side_by_side import build_side_by_side_workbook
 from mrg2opus.excel_io.merge import DuplicateSheetError
 from mrg2opus.excel_io.writer import resolve_sheet_names
+from mrg2opus.parsers.common.dg_twins import reefer_and_nor_groups
 from mrg2opus.parsers.registry import ClassificationResult, get_profile
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema import opus_columns as cols
@@ -95,6 +96,7 @@ class CompareState:
     default_commodity_groups: list[tuple[str, str]] = field(default_factory=list)
     # Which of those get a DG twin - see WizardState.dg_twin_groups.
     dg_twin_groups: frozenset[str] = frozenset()
+    reefer_nor_groups: frozenset[str] = frozenset()
     # Which lane that snapshot was taken for, so switching lane re-takes it.
     groups_lane_id: str | None = None
     skip_sheets: list[str] = field(default_factory=list)
@@ -869,6 +871,7 @@ def render() -> None:
             base_rows = run_parser(parser_cls(), state.workbook, probe)
         state.default_commodity_groups = distinct_commodity_groups(base_rows)
         state.dg_twin_groups = groups_offering_dg_twins(probe)
+        state.reefer_nor_groups = reefer_and_nor_groups(base_rows)
         # Same sequential G0001, G0002, ... default Convert seeds after
         # its first parse - so both screens start from the same draft and
         # a difference between them is a difference someone chose.
@@ -884,7 +887,7 @@ def render() -> None:
         )
         state.profile = render_filing_settings(
             state.profile, state.default_commodity_groups, state.dg_twin_groups,
-            selected, key_prefix="compare",
+            state.reefer_nor_groups, selected, key_prefix="compare",
         )
 
     state.skip_sheets = st.multiselect(

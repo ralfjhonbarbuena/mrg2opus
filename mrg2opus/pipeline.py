@@ -10,6 +10,11 @@ profile said. Both the CLI and the Streamlit wizard go through here now.
 from __future__ import annotations
 
 from mrg2opus.parsers.base import BaseMRGParser
+from mrg2opus.parsers.common.dg_twins import (
+    add_missing_dangerous_route_notes,
+    add_reefer_and_nor_dg_twins,
+    reefer_and_nor_groups,
+)
 from mrg2opus.parsers.common.ordering import drop_commodity_groups, reorder_row_set
 from mrg2opus.parsers.common.sequencing import finalize_sequences
 from mrg2opus.presets.models import MappingProfile
@@ -26,6 +31,17 @@ VERTICAL_RATES_ROW_CAP = 10_000
 
 def run_parser(parser: BaseMRGParser, workbook, profile: MappingProfile) -> dict[str, OpusRowSet]:
     row_sets = parser.run_multi(workbook, profile)
+    # Reefer/NOR DG twins for the groups the settings turned on. Only LAWC
+    # files these by default and builds its own; everywhere else they are
+    # an opt-in, so the profile has to say so explicitly - an absent flag
+    # means "off" here, the opposite of the dry groups' default, which is
+    # why this reads .get(group, True) rather than .get(group, False).
+    enabled = frozenset(
+        group for group in reefer_and_nor_groups(row_sets)
+        if not profile.skip_dg_generation.get(group, True)
+    )
+    if enabled:
+        row_sets = {suffix: add_reefer_and_nor_dg_twins(rs, enabled) for suffix, rs in row_sets.items()}
     # Before everything else, so the dropped groups are absent from the
     # ordering, the sequence fixups and the VERTICAL RATES derivation
     # alike - that last one is how they stay out of that sheet.
@@ -38,6 +54,10 @@ def run_parser(parser: BaseMRGParser, workbook, profile: MappingProfile) -> dict
     # before the VERTICAL RATES derivation, which reads rates' cmdt_seq.
     for rs in row_sets.values():
         finalize_sequences(rs)
+        # After the sequencing pass, which is what an RN row addresses its
+        # RATES row by - see add_missing_dangerous_route_notes.
+        if enabled:
+            add_missing_dangerous_route_notes(rs)
     if profile.include_vertical_rates:
         row_sets = {suffix: build_vertical_rates(rs) for suffix, rs in row_sets.items()}
     return row_sets

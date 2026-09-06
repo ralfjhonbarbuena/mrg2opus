@@ -51,6 +51,7 @@ from mrg2opus.parsers.common.commodity import (
     resolve_commodity_description,
 )
 from mrg2opus.parsers.common.container_map import ContainerMap, load_container_map
+from mrg2opus.parsers.common.dg_twins import dangerous_route_note
 from mrg2opus.parsers.common.exclusion import is_excluded, location_is_excluded
 from mrg2opus.parsers.common.freetime import build_lawc_freetime
 from mrg2opus.parsers.common.header_grid import flatten_pod_header
@@ -592,7 +593,7 @@ class LAWCParser(BaseMRGParser):
         # has its own default description to key by.
         #
         # Both get a DG twin, and the two twins differ - see
-        # REEFER_DG_CONFIG and _nor_dg_route_note:
+        # REEFER_DG_CONFIG and dangerous_route_note:
         #   Reefer (R/RF) -> R/DG, an otherwise identical row.
         #   NOR    (R/DR) -> D/DG, carrying "REEFER DRY AS DANGEROUS".
         # Both stay in the group they came from, which is how the real
@@ -656,7 +657,7 @@ class LAWCParser(BaseMRGParser):
                 )
                 if not config.skip_dg_generation.get(default_description, False):
                     dg_update = (
-                        {"prefix": "D", "cgo_type": "DG", "route_note": _nor_dg_route_note(row.route_note)}
+                        {"prefix": "D", "cgo_type": "DG", "route_note": dangerous_route_note(row.route_note)}
                         if is_nor
                         else {"prefix": REEFER_DG_CONFIG[0], "cgo_type": REEFER_DG_CONFIG[1]}
                     )
@@ -909,25 +910,21 @@ def _oog_route_note(equipment: str, kci: bool) -> str | None:
     return label
 
 
-# "REEFER DRY AS DANGEROUS" - user-confirmed (2026-08-26, not derivable
-# from raw MRG text): Non-Operating Reefer ("LAWC NOR" sheet) cargo that's
-# dangerous is filed as D/DG rather than R/DG, and this note is what says
-# why. Applies ONLY to NOR; Reefer's own dangerous twin is a plain R/DG
-# with no note at all (see REEFER_DG_CONFIG). Combines with any route_note
-# the NOR row already carries (e.g. COBUN's AX3 vessel-lane note) via
-# " | ", confirmed against reference/2_OPUS/15_LAWC FAK and 17_LAWC
-# TIER 1's real RN/RATES sheets.
+# Why the NOR twin carries "REEFER DRY AS DANGEROUS" - user-confirmed
+# (2026-08-26, not derivable from raw MRG text): Non-Operating Reefer
+# ("LAWC NOR" sheet) cargo that's dangerous is filed as D/DG rather than
+# R/DG, and the note is what says why. Applies ONLY to NOR; Reefer's own
+# dangerous twin is a plain R/DG with no note (see REEFER_DG_CONFIG).
+# Confirmed against reference/2_OPUS/15_LAWC FAK and 17_LAWC TIER 1's
+# real RN/RATES sheets. The text itself, and the " | " it joins an
+# existing note with, live in parsers/common/dg_twins.py - this is the
+# only lane that files these by default, but any lane can be asked to.
 #
 # These rows stay in NOR's own commodity group. They used to be moved into
 # COMMODITY_SEA's, on a reading of the user's "G0004" that matched this
 # file's internal SEA code rather than the real filing's G0004 - which is
 # "NOR & REEFER", and which holds every R/RF, R/DG, R/DR and D/DG row in
 # the reference file while the SEA group's DR and DG counts stay equal.
-NOR_DG_ROUTE_NOTE = "REEFER DRY AS DANGEROUS"
-
-
-def _nor_dg_route_note(existing: str | None) -> str:
-    return f"{NOR_DG_ROUTE_NOTE} | {existing}" if existing else NOR_DG_ROUTE_NOTE
 
 
 def _classify_oog_equipment(container_label: str) -> str:

@@ -506,3 +506,15 @@ def test_an_unknown_sheet_type_is_skipped_not_written_with_the_wrong_columns():
         build_side_by_side_workbook([("NOT A SHEET", "X", [{}], [{}])])
     ))
     assert wb.sheetnames == ["HOW TO USE"]
+
+
+def test_disabling_skips_keeps_the_flags_that_add_rows():
+    """An explicit False on a reefer/NOR group is what turns its DG twin
+    ON (parsers/common/dg_twins.py). Dropping it here would make the
+    "nothing skipped" parse smaller than the real one, and the rows the
+    user asked for would read as rows they skipped."""
+    profile = MappingProfile(skip_dg_generation={"FAK": True, "FAK (NOR)": False})
+
+    without = profile_without_row_skips(profile)
+
+    assert without.skip_dg_generation == {"FAK (NOR)": False}

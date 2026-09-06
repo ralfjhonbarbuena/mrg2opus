@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from mrg2opus.parsers.common.dg_twins import reefer_and_nor_groups
 from mrg2opus.parsers.registry import get_profile
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.ui.commodity_utils import (
@@ -64,6 +65,7 @@ def render(state: WizardState) -> None:
             # see WizardState.default_commodity_groups.
             state.default_commodity_groups = distinct_commodity_groups(state.row_sets)
             state.dg_twin_groups = groups_offering_dg_twins(probe)
+            state.reefer_nor_groups = reefer_and_nor_groups(state.row_sets)
 
             # User-directed (2026-08-27): every distinct group gets its own
             # unique output code (G0001, G0002, ...) by default, instead of
@@ -99,6 +101,7 @@ def render(state: WizardState) -> None:
         state.row_sets = None
         state.default_commodity_groups = []
         state.dg_twin_groups = frozenset()
+        state.reefer_nor_groups = frozenset()
         state.output_bytes = None
         st.rerun()
 

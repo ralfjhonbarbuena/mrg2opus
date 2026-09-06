@@ -47,6 +47,7 @@ def render(state: WizardState) -> None:
         state.row_sets = None
         state.default_commodity_groups = []
         state.dg_twin_groups = frozenset()
+        state.reefer_nor_groups = frozenset()
         state.output_bytes = None
 
     if state.workbook is None:

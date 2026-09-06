@@ -63,6 +63,7 @@ def render_filing_settings(
     profile: MappingProfile,
     groups: list[tuple[str, str]],
     dg_twin_groups: frozenset[str],
+    reefer_nor_groups: frozenset[str],
     lane_id: str | None,
     key_prefix: str,
 ) -> MappingProfile:
@@ -70,8 +71,10 @@ def render_filing_settings(
 
     `groups` is the parser's own (code, description) pairs from an
     override-free parse - the identities every override dict is keyed by.
-    `dg_twin_groups` names the subset of those that get a D/DG or R/DG
-    twin at all, from commodity_utils.groups_offering_dg_twins().
+    `dg_twin_groups` names the subset of those the lane files a DG twin
+    for by default (commodity_utils.groups_offering_dg_twins), and
+    `reefer_nor_groups` the reefer and NOR groups, which can be asked for
+    one whether or not the lane files it (parsers.common.dg_twins).
 
     Returns a NEW profile built from what is on screen rather than
     mutating the one passed in, so the caller decides when it takes
@@ -241,32 +244,42 @@ def render_filing_settings(
         key=f"{key_prefix}_generate_dg",
     )
 
-    # Per-group opt-out, listing ONLY the groups that have a twin to drop.
-    # Which those are is read from the parser itself (see
-    # commodity_utils.groups_offering_dg_twins) rather than assumed: LAWC's
-    # OOG never gets one, and neither does any lane's Reefer or NOR except
-    # LAWC's. A checkbox that cannot do anything is worse than no checkbox,
-    # since a tick on it reads as a setting that was ignored.
+    # Per group, and only for groups DG can mean something for: the ones
+    # this lane files a twin for by default, plus every reefer and NOR
+    # group, which can be asked for one even where the lane files none -
+    # another MRG may well carry them (user, 2026-09-06), and needing a
+    # code change to file them would be worse than a checkbox that starts
+    # off. Groups that are neither - LAWC's OOG, an in-gauge group - have
+    # no DG concept at all and get no checkbox, since a tick that cannot
+    # do anything reads as a setting the tool ignored.
     skip_dg_choices: dict[str, bool] = {}
     if not is_tad_lane and generate_dg:
-        with_twins = [desc for _code, desc in groups if desc in dg_twin_groups]
-        if with_twins:
-            st.caption("Only these groups get DG rows. Untick one to drop its DG rows and keep the rest.")
+        dg_able = [desc for _code, desc in groups if desc in dg_twin_groups or desc in reefer_nor_groups]
+        if dg_able:
+            st.caption(
+                "Ticked groups get DG rows. Reefer and NOR groups start unticked unless this lane files "
+                "them as dangerous already - tick one to file its DG rows too (R/RF becomes a matching "
+                "R/DG row; R/DR becomes a D/DG row noted REEFER DRY AS DANGEROUS)."
+            )
             # Labelled with whatever the table says right now, not with
             # the last applied description - on Convert those differ until
             # Apply, and a group renamed a line above should be findable
             # here by its new name.
             labels = {key: (r.get("description") or key) for r, key in zip(edited, row_keys)}
-            cols_dg = st.columns(min(3, len(with_twins)))
-            for i, desc in enumerate(with_twins):
+            cols_dg = st.columns(min(3, len(dg_able)))
+            for i, desc in enumerate(dg_able):
                 with cols_dg[i % len(cols_dg)]:
+                    # Off unless the lane files this group's twin itself -
+                    # which is also the default the pipeline reads, so an
+                    # untouched profile and a ticked-through one agree.
+                    on_by_default = desc in dg_twin_groups
                     skip_dg_choices[desc] = not st.checkbox(
                         labels.get(desc, desc),
-                        value=not profile.skip_dg_generation.get(desc, False),
+                        value=not profile.skip_dg_generation.get(desc, not on_by_default),
                         key=f"{key_prefix}_dg_group_{desc}",
                     )
         else:
-            st.caption("No commodity group in this file gets DG rows, so there is nothing to drop per group.")
+            st.caption("No commodity group in this file can carry DG rows, so there is nothing to choose here.")
 
     generate_tad_dg_duplicate = generate_dg if is_tad_lane else profile.generate_tad_dg_duplicate
     include_tad_d7 = profile.include_tad_d7
@@ -328,7 +341,11 @@ def render_filing_settings(
     if not generate_dg and not is_tad_lane:
         skip_dg_generation = {key: True for _r, key in rows}
     else:
-        skip_dg_generation = {desc: True for desc, skip in skip_dg_choices.items() if skip}
+        # Both answers are written, not just the skips: an absent flag
+        # means "off" for a reefer/NOR group and "on" for a dry one, so
+        # only an explicit False says "file this group's twin" for the
+        # first kind - see pipeline.run_parser.
+        skip_dg_generation = dict(skip_dg_choices)
     # The FINAL description (post-override) of each row, sorted by
     # its "Order" value - this is what actually ends up on the
     # output rows, so it's what group_order needs to match against

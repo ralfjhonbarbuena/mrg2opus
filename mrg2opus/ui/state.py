@@ -43,6 +43,9 @@ class WizardState:
     # Which of those actually get a DG twin, so the settings only offer
     # to drop one where there is one to drop (LAWC's OOG never has one).
     dg_twin_groups: frozenset[str] = frozenset()
+    # Reefer/NOR groups, which can be asked for a twin whether or not
+    # this lane files one - see parsers/common/dg_twins.py.
+    reefer_nor_groups: frozenset[str] = frozenset()
     output_filename: str | None = None
     output_bytes: bytes | None = None
 
