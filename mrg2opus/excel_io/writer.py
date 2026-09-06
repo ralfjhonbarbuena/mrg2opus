@@ -180,10 +180,15 @@ def _sheet_names_for_suffix(suffix: str) -> dict[str, str]:
 def resolve_sheet_names(
     suffix: str,
     sheet_name_overrides: dict[str, str] | None = None,
-    scoped_sheet_name_overrides: dict[str, dict[str, str]] | None = None,
+    per_scope_names: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, str]:
-    """{OpusRowSet field name: the sheet name it will actually be written
-    under} for one scope, applying both override layers.
+    """{OpusRowSet field name: the sheet name for one scope}.
+
+    With no per_scope_names it answers "what will we write?" - the writer
+    and the UI both call it that way, so a workbook's four scopes are all
+    named "{base}-{scope}". Pass a lane's REFERENCE_SHEET_NAMES to ask the
+    other question instead: what does the real filing for this scope call
+    that sheet? Only Compare asks that one.
 
     Public because the UI needs the SAME answer the writer will act on -
     the wizard used to keep its own hardcoded list of sheet labels, which
@@ -195,8 +200,8 @@ def resolve_sheet_names(
     if sheet_name_overrides:
         tag = f"-{suffix}" if suffix else ""
         names.update({key: f"{base}{tag}" for key, base in sheet_name_overrides.items()})
-    if scoped_sheet_name_overrides and suffix in scoped_sheet_name_overrides:
-        names.update(scoped_sheet_name_overrides[suffix])
+    if per_scope_names and suffix in per_scope_names:
+        names.update(per_scope_names[suffix])
     return names
 
 
@@ -248,7 +253,6 @@ def write_opus_workbook_multi(
     row_sets: dict[str, OpusRowSet],
     out_path: Path | str,
     sheet_name_overrides: dict[str, str] | None = None,
-    scoped_sheet_name_overrides: dict[str, dict[str, str]] | None = None,
 ) -> None:
     """Write several sub-lane OpusRowSets into ONE workbook, each under its
     own suffixed sheet names (e.g. {"TZDAR": ..., "KEMBA": ...} ->
@@ -258,15 +262,15 @@ def write_opus_workbook_multi(
     sheet_name_overrides lets a lane replace one or more base sheet names
     (keyed by OpusRowSet field name, e.g. {"route_notes": "ROUTE NOTE"})
     when its own real filing convention differs from the default - see
-    BaseMRGParser.SHEET_NAME_OVERRIDES. scoped_sheet_name_overrides is for
-    the rarer case where even that uniform tagging is wrong for one scope -
-    {scope: {field: full_name}}, applied verbatim (no tag appended) for
-    whichever fields that scope lists, layered OVER sheet_name_overrides -
-    see BaseMRGParser.SCOPED_SHEET_NAME_OVERRIDES."""
+    BaseMRGParser.SHEET_NAME_OVERRIDES. It is lane-wide: every scope is
+    named the same way, tag and all, so a workbook holding four scopes
+    reads as one filing rather than as four filings' habits. Where a real
+    filing calls a sheet something else, that name is recorded on
+    BaseMRGParser.REFERENCE_SHEET_NAMES and used only for reading it."""
     wb = Workbook()
     wb.remove(wb.active)
     for suffix, row_set in row_sets.items():
-        names = resolve_sheet_names(suffix, sheet_name_overrides, scoped_sheet_name_overrides)
+        names = resolve_sheet_names(suffix, sheet_name_overrides)
         _write_row_set(wb, row_set, names)
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)

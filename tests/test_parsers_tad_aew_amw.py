@@ -283,7 +283,7 @@ def _arbs_key(row: dict) -> tuple:
 def test_tad_aew_amw_arbs_matches_ground_truth(scope, sheet):
     """AEW's own ARBS sheet is scope-prefixed ("AEW ARBS"), AMW's is bare
     ("ORIGIN ARBS", no scope tag at all) - another real naming drift on
-    top of the CMDT NOTE one (see SCOPED_SHEET_NAME_OVERRIDES)."""
+    top of the CMDT NOTE one (see REFERENCE_SHEET_NAMES)."""
     row_set = _run_tad(AEW_RFA_EFFECTIVE if scope == "AEW" else AMW_RFA_EFFECTIVE)[scope]
     generated = [r.model_dump() for r in row_set.arbs]
 

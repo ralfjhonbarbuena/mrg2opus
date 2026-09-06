@@ -33,7 +33,6 @@ def _full_row_set():
 
 class _OverridingParser:
     SHEET_NAME_OVERRIDES = {"route_notes": "ROUTE NOTE"}
-    SCOPED_SHEET_NAME_OVERRIDES = {"AEW": {"cmdt_notes": "SRCHG"}}
 
 
 def test_every_output_field_is_listed():
@@ -52,19 +51,29 @@ def test_listed_names_match_the_written_workbook(tmp_path):
 
 
 def test_listed_names_honour_sheet_name_overrides(tmp_path):
-    """A lane can rename its sheets per scope; the UI must show the name
-    the user will actually see, not the default."""
+    """A lane can rename a sheet type; the UI must show the name the user
+    will actually see, not the default."""
     row_sets = {"AEW": _full_row_set()}
     cls = _OverridingParser
     out = tmp_path / "o.xlsx"
-    write_opus_workbook_multi(
-        row_sets, out,
-        sheet_name_overrides=cls.SHEET_NAME_OVERRIDES,
-        scoped_sheet_name_overrides=cls.SCOPED_SHEET_NAME_OVERRIDES,
-    )
+    write_opus_workbook_multi(row_sets, out, sheet_name_overrides=cls.SHEET_NAME_OVERRIDES)
     names = [s.name for s in output_sheets(row_sets, cls)]
     assert names == openpyxl.load_workbook(out).sheetnames
-    assert "SRCHG" in names and "ROUTE NOTE-AEW" in names
+    assert "ROUTE NOTE-AEW" in names
+
+
+def test_every_scope_is_named_the_same_way(tmp_path):
+    """One workbook, one convention. A lane whose scopes are filed as
+    separate real workbooks used to carry each of those files' own sheet
+    names into our single export, so its four scopes' surcharge sheets
+    came out as SRCHG, CMDT NOTE-AMW, AEW SRCHG and AMW SRCHG."""
+    row_sets = {"AEW": _full_row_set(), "JAPAN AMW": _full_row_set()}
+    out = tmp_path / "o.xlsx"
+    write_opus_workbook_multi(row_sets, out, sheet_name_overrides=_OverridingParser.SHEET_NAME_OVERRIDES)
+
+    names = openpyxl.load_workbook(out).sheetnames
+    for base in ("RATES", "CMDT NOTE", "ROUTE NOTE", "VERTICAL RATES"):
+        assert f"{base}-AEW" in names and f"{base}-JAPAN AMW" in names
 
 
 def test_empty_sheets_are_not_listed():

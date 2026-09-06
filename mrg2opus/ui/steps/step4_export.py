@@ -20,12 +20,9 @@ def _build_workbook_bytes(state: WizardState) -> bytes:
     # names - without it the keys wouldn't match and nothing would skip.
     row_sets = _apply_skips(state.row_sets, state.profile.skip_output_sheets, parser_cls)
     overrides = parser_cls.SHEET_NAME_OVERRIDES if parser_cls else None
-    scoped_overrides = parser_cls.SCOPED_SHEET_NAME_OVERRIDES if parser_cls else None
     with tempfile.TemporaryDirectory() as tmp_dir:
         out_path = Path(tmp_dir) / "opus_output.xlsx"
-        write_opus_workbook_multi(
-            row_sets, out_path, sheet_name_overrides=overrides, scoped_sheet_name_overrides=scoped_overrides
-        )
+        write_opus_workbook_multi(row_sets, out_path, sheet_name_overrides=overrides)
         return out_path.read_bytes()
 
 

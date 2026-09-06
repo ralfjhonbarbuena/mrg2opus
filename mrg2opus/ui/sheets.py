@@ -54,11 +54,10 @@ def output_sheets(row_sets: dict[str, OpusRowSet], parser_cls=None) -> list[Outp
     listed here is exactly what lands in the file.
     """
     overrides = getattr(parser_cls, "SHEET_NAME_OVERRIDES", None)
-    scoped = getattr(parser_cls, "SCOPED_SHEET_NAME_OVERRIDES", None)
 
     sheets: list[OutputSheet] = []
     for scope, row_set in row_sets.items():
-        names = resolve_sheet_names(scope, overrides, scoped)
+        names = resolve_sheet_names(scope, overrides)
         for field in OUTPUT_SHEET_FIELDS:
             rows = getattr(row_set, field, None) or []
             if rows:

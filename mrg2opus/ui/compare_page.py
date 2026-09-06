@@ -409,7 +409,7 @@ def _run_comparison(
     skipped_keys: frozenset = frozenset(),
     skip_sheets: frozenset = frozenset(),
     sheet_name_overrides: dict | None = None,
-    scoped_sheet_name_overrides: dict | None = None,
+    reference_sheet_names: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     want_grouped = rates_mode in ("Grouped (RATES)", "Both")
     want_exploded = rates_mode in ("Exploded (RATES PORT-PORT)", "Both")
@@ -431,12 +431,16 @@ def _run_comparison(
                 duplicates.append({
                     "sheet": f"{label}{tag_for(suffix)}", "count": count, "row": concat,
                 })
-        # scoped keeps the sub-lane in the name ("RATES-OEW"); names is
-        # what actually exists in the reference. The workbook is labelled
-        # from scoped so two sub-lanes never collide on one tab name.
-        scoped = resolve_sheet_names(suffix, sheet_name_overrides, scoped_sheet_name_overrides)
-        plain = resolve_sheet_names("", sheet_name_overrides, scoped_sheet_name_overrides)
-        names = {k: _pick_sheet_name(ref_wb, scoped[k], plain[k]) for k in scoped}
+        # scoped is what WE write ("RATES-OEW") and what the side-by-side
+        # workbook is labelled with, so two sub-lanes never collide on one
+        # tab name. names is what to look for in the REFERENCE, which is a
+        # different question: the filings are delivered one file per scope,
+        # under whatever that file calls its sheets (see
+        # BaseMRGParser.REFERENCE_SHEET_NAMES).
+        scoped = resolve_sheet_names(suffix, sheet_name_overrides)
+        reference = resolve_sheet_names(suffix, sheet_name_overrides, reference_sheet_names)
+        plain = resolve_sheet_names("", sheet_name_overrides)
+        names = {k: _pick_sheet_name(ref_wb, reference[k], plain[k]) for k in scoped}
         if want_grouped:
             side_by_side.append((
                 "RATES", scoped["rates"],
@@ -918,7 +922,7 @@ def render() -> None:
             state.row_sets, state.reference_workbook, state.rates_mode,
             state.selected_lane_id, state.apply_known_gaps, skipped_keys,
             frozenset(state.skip_sheets),
-            parser_cls.SHEET_NAME_OVERRIDES, parser_cls.SCOPED_SHEET_NAME_OVERRIDES,
+            parser_cls.SHEET_NAME_OVERRIDES, parser_cls.REFERENCE_SHEET_NAMES,
         )
         state.results_computed_for = current_settings
 

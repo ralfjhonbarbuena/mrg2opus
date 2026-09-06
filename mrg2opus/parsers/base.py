@@ -39,18 +39,22 @@ class BaseMRGParser(ABC):
     # active parser class and passes it to write_opus_workbook_multi.
     SHEET_NAME_OVERRIDES: ClassVar[dict[str, str]] = {}
 
-    # Per-SCOPE (run_multi() sub-lane key) full sheet-name overrides, for
-    # the rarer case where SHEET_NAME_OVERRIDES' uniform "{base}-{suffix}"
-    # tagging can't express the real naming - confirmed e.g. TAD FILING
-    # AEW/AMW: AEW's own CMDT NOTE block is literally named "SRCHG" while
-    # AMW's uses the standard "CMDT NOTE" name, and AEW's ARBS sheet is
-    # "AEW ARBS" (name PREFIXED, no hyphen) while AMW's is bare "ORIGIN
-    # ARBS" (no scope tag at all) - no single suffix-tag rule covers both.
-    # {scope: {OpusRowSet field name: full sheet name}} - a scope present
-    # here uses these names verbatim instead of the tagged default/
-    # SHEET_NAME_OVERRIDES for the fields it lists; fields it doesn't list
-    # still fall back to the normal tagged naming.
-    SCOPED_SHEET_NAME_OVERRIDES: ClassVar[dict[str, dict[str, str]]] = {}
+    # What the REAL filings call each scope's sheets, where that differs
+    # from the name we write. Read-side only: Compare looks a sheet up in
+    # a reference workbook by this name, and nothing else consults it.
+    #
+    # It used to name our own output too, which is how one lane's export
+    # ended up with its four scopes' surcharge sheets called "SRCHG",
+    # "CMDT NOTE-AMW", "AEW SRCHG" and "AMW SRCHG" (user-reported,
+    # 2026-09-06). Those are three separate real workbooks' conventions,
+    # and they only collide because we write one workbook where the team
+    # files three - so our side now uses the same "{base}-{scope}" scheme
+    # for every scope of every lane, and the filings' own names live here
+    # for finding them again.
+    #
+    # {scope: {OpusRowSet field name: the sheet name in that scope's real
+    # filing}}. A field not listed is looked up under the normal name.
+    REFERENCE_SHEET_NAMES: ClassVar[dict[str, dict[str, str]]] = {}
 
     @abstractmethod
     def parse_raw(self, wb: Workbook) -> RawExtraction:

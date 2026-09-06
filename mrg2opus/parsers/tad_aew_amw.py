@@ -13,7 +13,7 @@ differences confirmed against reference/2_OPUS/23_TAD FILING AEW AMW:
   parsers/common/tad_snapshots.py (also wired into TAD-OEW-OMW/WMW-WEW).
 - **AEW's own CMDT NOTE sheet is literally named "SRCHG"**, not "CMDT
   NOTE" like AMW's (and every other TAD lane) - see
-  SCOPED_SHEET_NAME_OVERRIDES. AEW also has NO ROUTE NOTE sheet at all
+  REFERENCE_SHEET_NAMES. AEW also has NO ROUTE NOTE sheet at all
   (confirmed: zero T/S Port/Service Lane/special-node rows this period) -
   SHEET_NAME_OVERRIDES' "ROUTE NOTE" name still applies to AMW, which does
   use the mechanism (same HAYDARPASA/MARPORT/EGALY special-node table as
@@ -439,13 +439,20 @@ def _build_arbs_rows(
 class TADAewAmwParser(BaseMRGParser):
     lane_id: ClassVar[str] = "TAD-AEW-AMW"
     SHEET_NAME_OVERRIDES: ClassVar[dict[str, str]] = {"route_notes": "ROUTE NOTE"}
-    # The Japan scopes' own sheet names come from JAPAN POLLY.xlsx. Its
-    # ROUTE sheet is a single combined one carrying a Service Scope column,
-    # which this writer can't express - but only the AMW Japan scope ever
-    # produces route notes (AEW Japan's raw rows have no T/S Port, Service
-    # Lane, or special-node tag at all), so mapping just that one to
-    # "ROUTE" reproduces the real sheet without a name collision.
-    SCOPED_SHEET_NAME_OVERRIDES: ClassVar[dict[str, dict[str, str]]] = {
+    # What this lane's four scopes are called in the three real workbooks
+    # they are filed as - AEW POLLY, AMW POLLY and JAPAN POLLY. Compare
+    # reads a reference by these; we write every scope under the uniform
+    # "{base}-{scope}" name instead, since one exported workbook holding
+    # all four cannot sensibly carry three files' worth of local habits
+    # (AEW's surcharge sheet is "SRCHG", AMW's is "CMDT NOTE", and the
+    # Japan file prefixes both with the scope).
+    #
+    # JAPAN POLLY's "ROUTE" is one combined sheet with a Service Scope
+    # column, which this writer can't express - but only the AMW Japan
+    # scope ever produces route notes (AEW Japan's raw rows carry no T/S
+    # Port, Service Lane or special-node tag at all), so it is that
+    # scope's reference sheet outright.
+    REFERENCE_SHEET_NAMES: ClassVar[dict[str, dict[str, str]]] = {
         "AEW": {"cmdt_notes": "SRCHG", "arbs": "AEW ARBS"},
         "AMW": {"arbs": "ORIGIN ARBS"},
         SCOPE_JP_AEW: {"rates": "AEW RATES", "cmdt_notes": "AEW SRCHG", "arbs": "ORIGIN ARBS AEW"},

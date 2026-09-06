@@ -41,7 +41,6 @@ def parse_command(args: argparse.Namespace) -> None:
         row_sets,
         args.out,
         sheet_name_overrides=parser_cls.SHEET_NAME_OVERRIDES,
-        scoped_sheet_name_overrides=parser_cls.SCOPED_SHEET_NAME_OVERRIDES,
     )
     for suffix, row_set in row_sets.items():
         label = suffix or "(default)"
