@@ -10,6 +10,7 @@ See docs/superpowers/specs/2026-08-23-mrg-opus-comparison-design.md.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
@@ -115,6 +116,63 @@ def arbs_row_key(row: dict[str, Any]) -> tuple:
     return (row.get("point"), row.get("over"), row.get("per"))
 
 
+# --- The auditor's own row identity ------------------------------------------
+# How this is actually done by hand: the auditor drafts the filing
+# independently, CONCATENATEs these columns in Excel and matches that
+# against the processor's draft - every location code, the terms, the
+# transmodes, the whole Rate section, and the Route Note.
+#
+# AUDIT_KEY_FIELDS is that concat MINUS the rate values, and it is what
+# Compare matches rows on. Two reasons for the split:
+#   - Unique. rates_row_key (origin/destination/cgo/prefix/vias) is not:
+#     on LAWC it collapses 453 of 7,208 generated rows and 453 of the
+#     reference's 7,400 onto keys they share with another row, and
+#     diff_by_key builds a {key: row} dict, so every one of those was
+#     silently dropped and never compared. Verified unique on LAWC, CSE
+#     and LAEC, generated and reference alike.
+#   - Rates stay OUT of the key so a wrong rate reports as a rate
+#     difference on a matched route, rather than the route vanishing from
+#     one side and appearing as missing-plus-extra.
+AUDIT_KEY_FIELDS = (
+    "origin_code", "origin_term", "origin_transmode",
+    "o_via_code", "d_via_code",
+    "destination_code", "destination_term", "destination_transmode",
+    "prefix", "cgo_type", "route_note",
+)
+
+_RATE_SECTION_FIELDS = (
+    "cur_20", "rate_20", "cur_40", "rate_40", "cur_40hc", "rate_40hc", "cur_45", "rate_45",
+)
+
+# The full concat, rates included - the string the auditor would paste
+# into Excel, and the thing a duplicate is judged on.
+AUDIT_CONCAT_FIELDS = (
+    *AUDIT_KEY_FIELDS[:-1],          # everything up to route_note
+    *_RATE_SECTION_FIELDS,
+    "route_note",                    # concatenated last, as they build it
+)
+
+
+def audit_row_key(row: dict[str, Any]) -> tuple:
+    return tuple(row.get(f) for f in AUDIT_KEY_FIELDS)
+
+
+def audit_concat(row: dict[str, Any], sep: str = "|") -> str:
+    """The auditor's Excel CONCATENATE, as one string."""
+    return sep.join("" if (v := row.get(f)) is None else str(v) for f in AUDIT_CONCAT_FIELDS)
+
+
+def find_duplicate_filings(rows: list[dict[str, Any]]) -> list[tuple[str, int]]:
+    """Rows that are identical across the whole concat, which OPUS rejects.
+
+    Part of the audit by hand and worth stating even when the answer is
+    none, because "no duplicates" is a thing the auditor has to confirm
+    before approving, not merely the absence of a warning.
+    """
+    counts = Counter(audit_concat(row) for row in rows)
+    return sorted(((concat, n) for concat, n in counts.items() if n > 1), key=lambda p: -p[1])
+
+
 # Deliberate, user-directed or externally-assigned deviations that make
 # certain columns permanently non-matching between a fresh parse and a
 # written OPUS file - promoted from each lane's own golden test file
@@ -174,8 +232,10 @@ RATES_PRESENTATION_FIELDS = frozenset({
     "cmdt_seq", "route_seq",          # generated numbering, user-overridable
     "commodity_group_code",           # a placeholder until the user sets it
     "commodity_group_description",
-    "commodity_note",                 # copied from the group's own note text
 })
+# commodity_note is deliberately NOT here. The audit includes checking
+# that each commodity note is applied to the right route pairs, so a
+# difference in it is a defect, not a formatting choice.
 
 NOTE_PRESENTATION_FIELDS = frozenset({
     "header_seq", "note_seq",         # assigned by whoever writes the file

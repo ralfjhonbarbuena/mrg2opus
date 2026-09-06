@@ -5,8 +5,11 @@ import openpyxl
 from mrg2opus.audit.compare import (
     RATES_PRESENTATION_FIELDS,
     arbs_row_key,
+    audit_concat,
+    audit_row_key,
     diff_by_key,
     explain_profile_overrides,
+    find_duplicate_filings,
     find_sheet,
     profile_skips_rows,
     profile_without_row_skips,
@@ -242,3 +245,50 @@ def test_disabling_skips_leaves_every_other_setting_alone():
     assert without.skip_commodity_filing == {} and without.skip_dg_generation == {}
     assert without.commodity_code_overrides == {"CSE": "LWE01"}
     assert without.include_vertical_rates is False
+
+
+# --- the auditor's own row identity -----------------------------------------
+# The audit is done by CONCATENATEing these columns in Excel and matching
+# that against the other draft; Compare matches on the same thing.
+
+def _rates_dict(**overrides):
+    row = dict.fromkeys(cols.RATES_ROW_FIELDS)
+    row.update(
+        origin_code="MYPKG", origin_term="CY", destination_code="MXZLO",
+        destination_term="CY", prefix="D", cgo_type="DG", rate_20=5800,
+    )
+    row.update(overrides)
+    return row
+
+
+def test_the_audit_key_separates_rows_the_route_key_collapses():
+    """Two real LAWC rows: same route pair and cargo type, different rates
+    and route note. rates_row_key makes them one key, and diff_by_key's
+    {key: row} dict would drop one of them unseen."""
+    a = _rates_dict(route_note=None, rate_20=5800, rate_40=6100)
+    b = _rates_dict(route_note="REEFER DRY AS DANGEROUS", rate_20=None, rate_40hc=6000)
+
+    assert rates_row_key(a) == rates_row_key(b)
+    assert audit_row_key(a) != audit_row_key(b)
+
+
+def test_rates_stay_out_of_the_match_key():
+    """So a wrong rate reports as a rate difference on a matched route,
+    not as the route vanishing from one side."""
+    cheap, dear = _rates_dict(rate_20=100), _rates_dict(rate_20=999)
+    assert audit_row_key(cheap) == audit_row_key(dear)
+
+
+def test_the_concat_does_include_the_rates():
+    assert audit_concat(_rates_dict(rate_20=100)) != audit_concat(_rates_dict(rate_20=999))
+
+
+def test_a_row_repeated_exactly_is_a_duplicate_filing():
+    """What OPUS rejects, and what the audit checks for by hand."""
+    row = _rates_dict()
+    assert find_duplicate_filings([row]) == []
+    assert find_duplicate_filings([row, dict(row)]) == [(audit_concat(row), 2)]
+
+
+def test_rows_differing_only_on_a_rate_are_not_duplicates():
+    assert find_duplicate_filings([_rates_dict(rate_20=100), _rates_dict(rate_20=999)]) == []

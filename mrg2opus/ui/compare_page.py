@@ -17,6 +17,7 @@ import streamlit as st
 from openpyxl.workbook import Workbook
 
 from mrg2opus.audit.compare import (
+    AUDIT_KEY_FIELDS,
     CMDT_NOTE_IGNORE_FIELDS_BY_LANE,
     NOTE_PRESENTATION_FIELDS,
     RATES_IGNORE_FIELDS_BY_LANE,
@@ -24,12 +25,14 @@ from mrg2opus.audit.compare import (
     RATES_PRESENTATION_FIELDS,
     SPECIAL_NOTE_IGNORE_FIELDS_BY_LANE,
     arbs_row_key,
+    audit_concat,
+    audit_row_key,
     diff_by_key,
     diff_cmdt_blocks,
     explain_profile_overrides,
+    find_duplicate_filings,
     profile_skips_rows,
     profile_without_row_skips,
-    rates_row_key,
     read_arbs_sheet,
     read_cmdt_note_sheet,
     read_rates_sheet,
@@ -68,6 +71,8 @@ class CompareState:
     # Set when the comparison ran against a customized profile: the output
     # columns that will differ BECAUSE of a setting, and why.
     explained_overrides: dict[str, str] = field(default_factory=dict)
+    # Rows filed twice - OPUS rejects them, so the audit confirms absence.
+    duplicate_filings: list[dict[str, Any]] = field(default_factory=list)
     # (lane_id, rates_mode, apply_known_gaps, use_wizard_profile) at the moment compare_results
     # was computed - lets render() detect when the visible results no
     # longer match the current control settings, instead of silently
@@ -198,13 +203,17 @@ def _skipped_row_keys(parser, workbook, profile) -> frozenset[tuple]:
     def keys_of(row_sets: dict) -> set[tuple]:
         keys: set[tuple] = set()
         for row_set in row_sets.values():
-            keys |= {rates_row_key(r.model_dump()) for r in row_set.rates}
-            keys |= {rates_row_key(r.model_dump()) for r in row_set.rates_port_port}
+            keys |= {audit_row_key(r.model_dump()) for r in row_set.rates}
+            keys |= {audit_row_key(r.model_dump()) for r in row_set.rates_port_port}
         return keys
 
     kept = keys_of(run_parser(parser, workbook, profile))
     everything = keys_of(run_parser(parser, workbook, profile_without_row_skips(profile)))
     return frozenset(everything - kept)
+
+
+def tag_for(suffix: str) -> str:
+    return f"-{suffix}" if suffix else ""
 
 
 def _run_comparison(
@@ -214,7 +223,7 @@ def _run_comparison(
     lane_id: str,
     apply_known_gaps: bool = True,
     skipped_keys: frozenset = frozenset(),
-) -> list[dict]:
+) -> tuple[list[dict], list[dict]]:
     want_grouped = rates_mode in ("Grouped (RATES)", "Both")
     want_exploded = rates_mode in ("Exploded (RATES PORT-PORT)", "Both")
 
@@ -224,13 +233,22 @@ def _run_comparison(
     special_ignore = SPECIAL_NOTE_IGNORE_FIELDS_BY_LANE.get(lane_id, frozenset()) if apply_known_gaps else frozenset()
 
     results: list[dict] = []
+    duplicates: list[dict] = []
     for suffix, row_set in row_sets.items():
-        tag = f"-{suffix}" if suffix else ""
+        # Part of the audit in its own right: OPUS rejects a filing that
+        # carries the same route twice, so it has to be confirmed absent
+        # rather than merely not mentioned.
+        for label, rows in (("RATES", row_set.rates), ("RATES PORT-PORT", row_set.rates_port_port)):
+            for concat, count in find_duplicate_filings([r.model_dump() for r in rows]):
+                duplicates.append({
+                    "sheet": f"{label}{tag_for(suffix)}", "count": count, "row": concat,
+                })
+        tag = tag_for(suffix)
         if want_grouped:
             r = _compare_keyed_sheet(
                 "RATES", suffix, f"RATES{tag}",
                 [x.model_dump() for x in row_set.rates], ref_wb,
-                rates_row_key, cols.RATES_ROW_FIELDS, read_rates_sheet, ignore_fields=rates_ignore,
+                audit_row_key, cols.RATES_ROW_FIELDS, read_rates_sheet, ignore_fields=rates_ignore,
                 presentation_fields=RATES_PRESENTATION_FIELDS, skipped_keys=skipped_keys,
             )
             if r is not None:
@@ -239,7 +257,7 @@ def _run_comparison(
             r = _compare_keyed_sheet(
                 "RATES PORT-PORT", suffix, f"RATES{tag} PORT-PORT",
                 [x.model_dump() for x in row_set.rates_port_port], ref_wb,
-                rates_row_key, cols.RATES_ROW_FIELDS, read_rates_sheet, ignore_fields=port_port_ignore,
+                audit_row_key, cols.RATES_ROW_FIELDS, read_rates_sheet, ignore_fields=port_port_ignore,
                 presentation_fields=RATES_PRESENTATION_FIELDS, skipped_keys=skipped_keys,
             )
             if r is not None:
@@ -267,32 +285,80 @@ def _run_comparison(
         )
         if r is not None:
             results.append(r)
-    return results
+    return results, duplicates
 
 
 _DETAIL_ROW_LIMIT = 50
 
 
+_KEY_COLUMN_LABELS = {
+    "origin_code": "Origin", "origin_term": "O.Term", "origin_transmode": "O.Transmode",
+    "o_via_code": "O.Via", "d_via_code": "D.Via",
+    "destination_code": "Destination", "destination_term": "D.Term",
+    "destination_transmode": "D.Transmode",
+    "prefix": "Prefix", "cgo_type": "CGO Type", "route_note": "Route Note",
+}
+
+
+def _flatten(entries: list[dict]) -> list[dict]:
+    """Spread the match key into its own named columns.
+
+    The CSV used to carry the key as one stringified Python tuple -
+    "('MYPKG', 'MXZLO', 'DG', 'D', None, None)" - which can't be sorted,
+    filtered or VLOOKUP'd against the other draft. These are the same
+    columns the audit concatenates by hand, so a row lines up with the
+    auditor's own sheet.
+    """
+    flat: list[dict] = []
+    for entry in entries:
+        row: dict = {}
+        key = entry.get("key")
+        if isinstance(key, tuple) and len(key) == len(AUDIT_KEY_FIELDS):
+            row.update({
+                _KEY_COLUMN_LABELS[name]: value
+                for name, value in zip(AUDIT_KEY_FIELDS, key)
+            })
+        elif isinstance(key, str):
+            row["Note contents"] = key
+        elif key is not None:
+            row["Row"] = str(key)
+        if "contents" in entry:
+            row["Note contents"] = entry["contents"]
+        if "child_index" in entry:
+            row["Row in block"] = "parent" if entry["child_index"] == 0 else entry["child_index"]
+        if "field" in entry:
+            row["Column"] = entry["field"]
+            row["Your draft"] = entry.get("generated")
+            row["Reference"] = entry.get("reference")
+        flat.append(row)
+    return flat
+
+
 def _render_detail_table(label: str, rows: list[dict], key: str) -> None:
-    """One missing/extra/field_mismatches table: truncates the ON-SCREEN
-    view at _DETAIL_ROW_LIMIT rows (a large real-world mismatch count
-    would otherwise make Streamlit's grid unwieldy), but always offers the
-    FULL untruncated list as a CSV - the on-screen cap should never be the
-    only way to see a discrepancy."""
-    st.markdown(f"**{label}** ({len(rows)})")
-    st.dataframe(rows[:_DETAIL_ROW_LIMIT], hide_index=True, width="stretch")
-    if len(rows) > _DETAIL_ROW_LIMIT:
-        st.caption(f"Showing {_DETAIL_ROW_LIMIT} of {len(rows)} - download the full list below to see the rest.")
-        st.download_button(
-            f"⬇ Download all {len(rows)} rows as CSV",
-            data=pd.DataFrame(rows).to_csv(index=False).encode("utf-8"),
-            file_name=f"{key}.csv",
-            mime="text/csv",
-            key=f"download_{key}",
-        )
+    """One bucket of differences, on screen and as a CSV.
+
+    The on-screen grid is capped at _DETAIL_ROW_LIMIT rows (a real
+    mismatch count would otherwise make Streamlit's grid unwieldy); the
+    CSV always holds every row and is always offered, since it is the
+    thing the auditor actually works from beside their own draft."""
+    flat = _flatten(rows)
+    st.markdown(f"**{label}** ({len(flat)})")
+    st.dataframe(flat[:_DETAIL_ROW_LIMIT], hide_index=True, width="stretch")
+    # The CSV is always offered, not only past the on-screen cap: this is
+    # the artefact the auditor works from, alongside their own draft.
+    st.download_button(
+        f"⬇ Download as CSV ({len(flat)} rows)",
+        data=pd.DataFrame(flat).to_csv(index=False).encode("utf-8"),
+        file_name=f"{key}.csv",
+        mime="text/csv",
+        key=f"download_{key}",
+    )
+    if len(flat) > _DETAIL_ROW_LIMIT:
+        st.caption(f"Showing {_DETAIL_ROW_LIMIT} of {len(flat)} on screen - the CSV has all of them.")
 
 
-def _render_results(results: list[dict], explained_overrides: dict[str, str]) -> None:
+def _render_results(results: list[dict], explained_overrides: dict[str, str],
+                    duplicate_filings: list[dict] | None = None) -> None:
     if not results:
         st.info("Nothing to compare - the parsed MRG produced no rows for the sheet type(s) selected.")
         return
@@ -328,6 +394,15 @@ def _render_results(results: list[dict], explained_overrides: dict[str, str]) ->
             + (f"The {presentation} remaining differences are all in fields you control or the writer assigns."
                if presentation else "No differences at all.")
         )
+
+    if duplicate_filings:
+        st.error(
+            f"**{len(duplicate_filings)} route(s) filed more than once.** OPUS rejects a duplicate "
+            "filing, so these have to be resolved before the filing is approved."
+        )
+        _render_detail_table("Duplicate filings", duplicate_filings, "duplicate_filings")
+    else:
+        st.caption("✓ No duplicate route filings — checked on the same columns the audit concatenates.")
 
     if explained_overrides:
         st.info(
@@ -510,7 +585,7 @@ def render() -> None:
             state.row_sets = run_parser(parser, state.workbook, profile)
             skipped_keys = _skipped_row_keys(parser, state.workbook, profile)
         state.explained_overrides = explain_profile_overrides(profile)
-        state.compare_results = _run_comparison(
+        state.compare_results, state.duplicate_filings = _run_comparison(
             state.row_sets, state.reference_workbook, state.rates_mode,
             state.selected_lane_id, state.apply_known_gaps, skipped_keys,
         )
@@ -522,4 +597,4 @@ def render() -> None:
                 "⚠️ Lane, RATES mode, the known-gaps toggle or the profile choice changed since this "
                 "comparison ran - click **Run Comparison** to refresh before trusting these results."
             )
-        _render_results(state.compare_results, state.explained_overrides)
+        _render_results(state.compare_results, state.explained_overrides, state.duplicate_filings)
