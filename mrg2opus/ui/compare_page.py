@@ -29,18 +29,28 @@ from mrg2opus.audit.compare import (
     audit_row_key,
     diff_by_key,
     diff_cmdt_blocks,
+    diff_vertical_blocks,
     explain_profile_overrides,
     find_duplicate_filings,
+    find_sheet,
+    freetime_compared_fields,
+    freetime_row_key,
     profile_skips_rows,
     profile_without_row_skips,
     read_arbs_sheet,
     read_cmdt_note_sheet,
+    read_freetime_sheet,
     read_rates_sheet,
+    read_route_note_sheet,
     read_special_note_sheet,
+    read_vertical_rates_sheet,
     reconstruct_blocks,
+    reconstruct_vertical_blocks,
+    route_note_counts,
     split_mismatches_by_tier,
 )
 from mrg2opus.excel_io.merge import DuplicateSheetError
+from mrg2opus.excel_io.writer import resolve_sheet_names
 from mrg2opus.parsers.registry import ClassificationResult, get_profile
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema import opus_columns as cols
@@ -50,6 +60,13 @@ from mrg2opus.ui.parsing import run_parser
 from mrg2opus.ui.state import get_state as get_wizard_state
 
 RATES_MODE_OPTIONS = ["Grouped (RATES)", "Exploded (RATES PORT-PORT)", "Both"]
+
+# Sheets that can be left out of a comparison. The two RATES forms have
+# their own control above (they are the point of the screen); these are
+# the ones an audit may not need every time - and RN and VERTICAL RATES
+# are the slowest, since one is counted per note and the other rebuilt
+# block by block.
+SKIPPABLE_SHEETS = ["ORIGIN ARBS", "CMDT NOTE", "SPECIAL NOTE", "ROUTE NOTE", "VERTICAL RATES", "FREETIME"]
 
 
 @dataclass
@@ -66,6 +83,7 @@ class CompareState:
     # silently answered "what does the tool produce unaided?" rather than
     # "is the file I am about to upload right?".
     use_wizard_profile: bool = True
+    skip_sheets: list[str] = field(default_factory=list)
     row_sets: dict[str, Any] | None = None
     compare_results: list[dict[str, Any]] | None = None
     # Set when the comparison ran against a customized profile: the output
@@ -212,8 +230,137 @@ def _skipped_row_keys(parser, workbook, profile) -> frozenset[tuple]:
     return frozenset(everything - kept)
 
 
+
+def _empty_result(sheet_type, sub_lane, sheet_name, **over):
+    base = {
+        "sheet_type": sheet_type, "sub_lane": sub_lane, "sheet_name": sheet_name,
+        "found_in_reference": True, "matched": None, "routes_matched": None, "substance_ok": None,
+        "missing": [], "intentionally_absent": [], "extra": [],
+        "field_mismatches": [], "substance_mismatches": [], "presentation_mismatches": [],
+    }
+    base.update(over)
+    return base
+
+
+def _compare_route_note_sheet(suffix, sheet_name, generated, ref_wb) -> dict | None:
+    """RN can't be matched row-for-row: it is addressed by (Header Seq,
+    Route Seq) and OPUS assigns both itself - LAWC's real filing numbers
+    its headers from 1015, which no fresh parse reproduces. What compares
+    is how many times each note text appears and which lane it names."""
+    sub_lane = suffix or "(default)"
+    try:
+        expected = read_route_note_sheet(ref_wb, sheet_name)
+    except KeyError:
+        if not generated:
+            return None
+        return _empty_result("ROUTE NOTE", sub_lane, sheet_name, found_in_reference=False,
+                             extra=[{"contents": c, "lane": lane} for c, lane in route_note_counts(
+                                 [r.model_dump() for r in generated])])
+    if not generated and not expected:
+        return None
+
+    ours = route_note_counts([r.model_dump() for r in generated])
+    theirs = route_note_counts(expected)
+    missing = [{"contents": c, "lane": lane, "reference count": n}
+               for (c, lane), n in sorted(theirs.items()) if (c, lane) not in ours]
+    extra = [{"contents": c, "lane": lane, "your count": n}
+             for (c, lane), n in sorted(ours.items()) if (c, lane) not in theirs]
+    differing = [
+        {"key": c, "field": f"lane {lane}" if lane else "count",
+         "generated": ours[(c, lane)], "reference": theirs[(c, lane)]}
+        for (c, lane) in sorted(set(ours) & set(theirs))
+        if ours[(c, lane)] != theirs[(c, lane)]
+    ]
+    return _empty_result(
+        "ROUTE NOTE", sub_lane, sheet_name,
+        matched=len(set(ours) & set(theirs)) - len(differing),
+        missing=missing, extra=extra,
+        field_mismatches=differing, substance_mismatches=differing,
+    )
+
+
+def _compare_vertical_rates_sheet(suffix, sheet_name, generated, ref_wb) -> dict | None:
+    """Compared as BLOCKS, not rows: the sheet is a columnar encoding, so
+    a row on its own ("VNCMP", no destination, no rate) is the second
+    origin of the block above rather than a route of its own."""
+    sub_lane = suffix or "(default)"
+    rows = [r.model_dump() for r in generated]
+    try:
+        expected = read_vertical_rates_sheet(ref_wb, sheet_name)
+    except KeyError:
+        if not rows:
+            return None
+        return _empty_result(
+            "VERTICAL RATES", sub_lane, sheet_name, found_in_reference=False,
+            extra=[{"Row": str(b.key)} for b in reconstruct_vertical_blocks(rows)],
+        )
+    if not rows and not expected:
+        return None
+
+    missing, extra, differing = diff_vertical_blocks(rows, expected)
+    mismatches = [
+        {"key": key, "field": "rates", "generated": str(ours), "reference": str(theirs)}
+        for key, ours, theirs in differing
+    ]
+    ours_blocks = reconstruct_vertical_blocks(rows)
+    matched_blocks = len(ours_blocks) - len(extra) - len(differing)
+    return _empty_result(
+        "VERTICAL RATES", sub_lane, sheet_name,
+        matched=matched_blocks,
+        missing=[{"Row": str(k)} for k in missing],
+        extra=[{"Row": str(k)} for k in extra],
+        field_mismatches=mismatches, substance_mismatches=mismatches,
+    )
+
+
+def _compare_freetime_sheet(suffix, sheet_name, generated, ref_wb) -> dict | None:
+    sub_lane = suffix or "(default)"
+    rows = [r.model_dump() for r in generated]
+    try:
+        expected = read_freetime_sheet(ref_wb, sheet_name)
+    except KeyError:
+        if not rows:
+            return None
+        return _empty_result("FREETIME", sub_lane, sheet_name, found_in_reference=False,
+                             extra=[{"Row": str(freetime_row_key(r))} for r in rows])
+    if not rows and not expected:
+        return None
+
+    result = diff_by_key(rows, expected, key_fn=freetime_row_key, fields=freetime_compared_fields())
+    mismatches = [
+        {"key": m[0], "field": m[1], "generated": m[2], "reference": m[3]}
+        for m in result.field_mismatches
+    ]
+    return _empty_result(
+        "FREETIME", sub_lane, sheet_name, matched=result.matched,
+        missing=[{"Row": str(k)} for k in sorted(result.missing, key=str)],
+        extra=[{"Row": str(k)} for k in sorted(result.extra, key=str)],
+        field_mismatches=mismatches, substance_mismatches=mismatches,
+    )
+
+
 def tag_for(suffix: str) -> str:
     return f"-{suffix}" if suffix else ""
+
+
+def _pick_sheet_name(ref_wb: Workbook, scoped: str, plain: str) -> str:
+    """Which name to look for in the reference.
+
+    A multi-scope lane writes RATES-OEW and RATES-OMW into ONE workbook,
+    but the reference filings are delivered one file per scope, with
+    plain names - so the scoped name finds nothing and every row reports
+    as extra. Prefer the scoped name when the reference really is a
+    combined workbook, and fall back to the plain one when it isn't.
+    Returns the scoped name when neither exists, so the "sheet not found"
+    message names what was actually looked for.
+    """
+    for candidate in (scoped, plain):
+        try:
+            find_sheet(ref_wb, candidate)
+            return candidate
+        except KeyError:
+            continue
+    return scoped
 
 
 def _run_comparison(
@@ -223,6 +370,9 @@ def _run_comparison(
     lane_id: str,
     apply_known_gaps: bool = True,
     skipped_keys: frozenset = frozenset(),
+    skip_sheets: frozenset = frozenset(),
+    sheet_name_overrides: dict | None = None,
+    scoped_sheet_name_overrides: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
     want_grouped = rates_mode in ("Grouped (RATES)", "Both")
     want_exploded = rates_mode in ("Exploded (RATES PORT-PORT)", "Both")
@@ -243,10 +393,12 @@ def _run_comparison(
                 duplicates.append({
                     "sheet": f"{label}{tag_for(suffix)}", "count": count, "row": concat,
                 })
-        tag = tag_for(suffix)
+        scoped = resolve_sheet_names(suffix, sheet_name_overrides, scoped_sheet_name_overrides)
+        plain = resolve_sheet_names("", sheet_name_overrides, scoped_sheet_name_overrides)
+        names = {k: _pick_sheet_name(ref_wb, scoped[k], plain[k]) for k in scoped}
         if want_grouped:
             r = _compare_keyed_sheet(
-                "RATES", suffix, f"RATES{tag}",
+                "RATES", suffix, names["rates"],
                 [x.model_dump() for x in row_set.rates], ref_wb,
                 audit_row_key, cols.RATES_ROW_FIELDS, read_rates_sheet, ignore_fields=rates_ignore,
                 presentation_fields=RATES_PRESENTATION_FIELDS, skipped_keys=skipped_keys,
@@ -255,36 +407,48 @@ def _run_comparison(
                 results.append(r)
         if want_exploded:
             r = _compare_keyed_sheet(
-                "RATES PORT-PORT", suffix, f"RATES{tag} PORT-PORT",
+                "RATES PORT-PORT", suffix, names["rates_port_port"],
                 [x.model_dump() for x in row_set.rates_port_port], ref_wb,
                 audit_row_key, cols.RATES_ROW_FIELDS, read_rates_sheet, ignore_fields=port_port_ignore,
                 presentation_fields=RATES_PRESENTATION_FIELDS, skipped_keys=skipped_keys,
             )
             if r is not None:
                 results.append(r)
-        r = _compare_keyed_sheet(
-            "ARBS", suffix, f"ORIGIN ARBS{tag}",
+        r = None if "ORIGIN ARBS" in skip_sheets else _compare_keyed_sheet(
+            "ARBS", suffix, names["arbs"],
             [x.model_dump() for x in row_set.arbs], ref_wb,
             arbs_row_key, cols.ARBS_ROW_FIELDS, read_arbs_sheet,
         )
         if r is not None:
             results.append(r)
-        r = _compare_block_sheet(
-            "CMDT NOTE", suffix, f"CMDT NOTE{tag}",
+        r = None if "CMDT NOTE" in skip_sheets else _compare_block_sheet(
+            "CMDT NOTE", suffix, names["cmdt_notes"],
             [x.model_dump() for x in row_set.cmdt_notes], ref_wb,
             cols.CMDT_NOTE_ROW_FIELDS, read_cmdt_note_sheet, ignore_fields=cmdt_ignore,
             presentation_fields=NOTE_PRESENTATION_FIELDS,
         )
         if r is not None:
             results.append(r)
-        r = _compare_block_sheet(
-            "SPECIAL NOTE", suffix, f"SPECIAL NOTE{tag}",
+        r = None if "SPECIAL NOTE" in skip_sheets else _compare_block_sheet(
+            "SPECIAL NOTE", suffix, names["special_notes"],
             [x.model_dump() for x in row_set.special_notes], ref_wb,
             cols.SPECIAL_NOTE_ROW_FIELDS, read_special_note_sheet, ignore_fields=special_ignore,
             presentation_fields=NOTE_PRESENTATION_FIELDS,
         )
         if r is not None:
             results.append(r)
+        if "ROUTE NOTE" not in skip_sheets:
+            r = _compare_route_note_sheet(suffix, names["route_notes"], row_set.route_notes, ref_wb)
+            if r is not None:
+                results.append(r)
+        if "VERTICAL RATES" not in skip_sheets:
+            r = _compare_vertical_rates_sheet(suffix, names["vertical_rates"], row_set.vertical_rates, ref_wb)
+            if r is not None:
+                results.append(r)
+        if "FREETIME" not in skip_sheets:
+            r = _compare_freetime_sheet(suffix, names["freetime"], row_set.freetime, ref_wb)
+            if r is not None:
+                results.append(r)
     return results, duplicates
 
 
@@ -573,9 +737,18 @@ def render() -> None:
     if state.use_wizard_profile and not customized:
         st.caption("Nothing is customized in Convert yet, so this is the same as the tool's default output.")
 
+    state.skip_sheets = st.multiselect(
+        "Skip these sheets",
+        options=SKIPPABLE_SHEETS,
+        default=state.skip_sheets,
+        help="Leave a sheet out of the comparison. The two RATES forms are chosen above; "
+             "ROUTE NOTE and VERTICAL RATES are the slowest to check.",
+    )
+
     profile = wizard_profile if state.use_wizard_profile else MappingProfile()
     current_settings = (
-        state.selected_lane_id, state.rates_mode, state.apply_known_gaps, state.use_wizard_profile,
+        state.selected_lane_id, state.rates_mode, state.apply_known_gaps,
+        state.use_wizard_profile, tuple(sorted(state.skip_sheets)),
     )
 
     if st.button("Run Comparison", type="primary"):
@@ -588,13 +761,15 @@ def render() -> None:
         state.compare_results, state.duplicate_filings = _run_comparison(
             state.row_sets, state.reference_workbook, state.rates_mode,
             state.selected_lane_id, state.apply_known_gaps, skipped_keys,
+            frozenset(state.skip_sheets),
+            parser_cls.SHEET_NAME_OVERRIDES, parser_cls.SCOPED_SHEET_NAME_OVERRIDES,
         )
         state.results_computed_for = current_settings
 
     if state.compare_results is not None:
         if state.results_computed_for != current_settings:
             st.warning(
-                "⚠️ Lane, RATES mode, the known-gaps toggle or the profile choice changed since this "
-                "comparison ran - click **Run Comparison** to refresh before trusting these results."
+                "⚠️ Lane, RATES mode, the known-gaps toggle, the profile choice or the skipped sheets "
+                "changed since this comparison ran - click **Run Comparison** to refresh before trusting these results."
             )
         _render_results(state.compare_results, state.explained_overrides, state.duplicate_filings)

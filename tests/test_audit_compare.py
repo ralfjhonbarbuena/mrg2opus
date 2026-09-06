@@ -8,14 +8,18 @@ from mrg2opus.audit.compare import (
     audit_concat,
     audit_row_key,
     diff_by_key,
+    diff_vertical_blocks,
     explain_profile_overrides,
     find_duplicate_filings,
     find_sheet,
+    freetime_compared_fields,
     profile_skips_rows,
     profile_without_row_skips,
     rates_row_key,
     read_arbs_sheet,
     read_rates_sheet,
+    reconstruct_vertical_blocks,
+    route_note_counts,
     split_mismatches_by_tier,
 )
 from mrg2opus.presets.models import MappingProfile
@@ -292,3 +296,76 @@ def test_a_row_repeated_exactly_is_a_duplicate_filing():
 
 def test_rows_differing_only_on_a_rate_are_not_duplicates():
     assert find_duplicate_filings([_rates_dict(rate_20=100), _rates_dict(rate_20=999)]) == []
+
+
+# --- the three sheets that used not to be compared at all -------------------
+
+def test_a_blank_cell_and_an_empty_string_are_the_same_value():
+    """References use both - LAWC's own FREETIME writes "" where we write
+    nothing, which reported as 176 differences across 22 identical rows."""
+    a = {"seq": 1, "coverage_rgn": None}
+    b = {"seq": 1, "coverage_rgn": ""}
+    assert not diff_by_key([a], [b], key_fn=lambda r: (r["seq"],), fields=["coverage_rgn"]).field_mismatches
+
+
+def test_route_notes_are_compared_by_text_and_lane_not_by_row():
+    """RN is addressed by (Header Seq, Route Seq), both assigned by OPUS -
+    LAWC's real filing numbers its headers from 1015 - so rows can't be
+    matched one to one."""
+    rows = [
+        {"contents": "Vessel Service Lane: MX2", "lane": "MX2", "header_seq": 1015},
+        {"contents": "Vessel Service Lane: MX2", "lane": "MX2", "header_seq": 9999},
+        {"contents": "  ", "lane": None},
+    ]
+    counts = route_note_counts(rows)
+    assert counts == {("Vessel Service Lane: MX2", "MX2"): 2}
+
+
+def _vertical(route_seq=None, origin=None, dest=None, per=None, cargo=None, rate=None):
+    return {
+        "route_seq": route_seq, "origin_code": origin, "destination_code": dest,
+        "origin_term": "CY", "destination_term": "CY", "o_via_code": None, "d_via_code": None,
+        "per": per, "cargo_type": cargo, "rate": rate,
+    }
+
+
+def test_a_vertical_block_gathers_the_rows_below_its_route_seq():
+    """The sheet is columnar: a row carrying only an origin is the second
+    origin of the block above, not a route of its own."""
+    rows = [
+        _vertical(route_seq=17, origin="VNBHA", dest="MXZLO", per="D2", cargo="DR", rate=5800),
+        _vertical(origin="VNCMP", per="D4", cargo="DR", rate=6100),
+        _vertical(origin="VNSGN"),
+        _vertical(route_seq=18, origin="VNDAD", dest="MXZLO", per="D2", cargo="DR", rate=5850),
+    ]
+
+    blocks = reconstruct_vertical_blocks(rows)
+
+    assert len(blocks) == 2
+    assert blocks[0].origins == frozenset({"VNBHA", "VNCMP", "VNSGN"})
+    assert blocks[0].destinations == frozenset({"MXZLO"})
+    assert blocks[0].rates == (("D2", "DR", 5800), ("D4", "DR", 6100))
+
+
+def test_cargo_type_is_part_of_the_block_key():
+    """One route files a dry block and a reefer block back to back; without
+    cargo type in the key they collapse and one is dropped unseen."""
+    dry = reconstruct_vertical_blocks([_vertical(route_seq=1, origin="AUADL", dest="BEANR", per="D2", cargo="DR", rate=1941)])
+    reefer = reconstruct_vertical_blocks([_vertical(route_seq=2, origin="AUADL", dest="BEANR", per="R2", cargo="RF", rate=1755)])
+    assert dry[0].key != reefer[0].key
+
+
+def test_vertical_blocks_report_a_rate_difference_on_a_matched_route():
+    ours = [_vertical(route_seq=1, origin="AUADL", dest="BEANR", per="D2", cargo="DR", rate=1941)]
+    theirs = [_vertical(route_seq=1, origin="AUADL", dest="BEANR", per="D2", cargo="DR", rate=9999)]
+
+    missing, extra, differing = diff_vertical_blocks(ours, theirs)
+
+    assert not missing and not extra
+    assert len(differing) == 1
+
+
+def test_freetime_skips_the_columns_we_deliberately_leave_blank():
+    compared = freetime_compared_fields()
+    assert "rfa_no" not in compared and "status" not in compared and "dar_no" not in compared
+    assert "tariff" in compared and "free_time_total" in compared

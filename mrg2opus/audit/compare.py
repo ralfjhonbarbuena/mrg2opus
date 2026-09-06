@@ -98,6 +98,12 @@ def _normalize(value: Any) -> Any:
         return value
     if isinstance(value, str):
         value = value.strip()
+        # An empty cell and a cell holding "" are the same thing in a
+        # spreadsheet, and references use both - LAWC's own FREETIME sheet
+        # writes "" where we write nothing, which reported as 176 field
+        # differences across 22 identical rows before this.
+        if not value:
+            return None
         return int(value) if value.isdigit() else value
     return value
 
@@ -172,6 +178,28 @@ def find_duplicate_filings(rows: list[dict[str, Any]]) -> list[tuple[str, int]]:
     counts = Counter(audit_concat(row) for row in rows)
     return sorted(((concat, n) for concat, n in counts.items() if n > 1), key=lambda p: -p[1])
 
+
+
+def read_vertical_rates_sheet(wb: Workbook, sheet_name: str) -> list[dict[str, Any]]:
+    ws = wb[find_sheet(wb, sheet_name)]
+    rows = []
+    for row in ws.iter_rows(min_row=3):
+        values = [c.value for c in row[: len(cols.VERTICAL_RATES_ROW_FIELDS)]]
+        if all(v is None for v in values):
+            continue
+        rows.append(dict(zip(cols.VERTICAL_RATES_ROW_FIELDS, values)))
+    return rows
+
+
+def read_freetime_sheet(wb: Workbook, sheet_name: str) -> list[dict[str, Any]]:
+    ws = wb[find_sheet(wb, sheet_name)]
+    rows = []
+    for row in ws.iter_rows(min_row=3):
+        values = [c.value for c in row[: len(cols.FREETIME_ROW_FIELDS)]]
+        if all(v is None for v in values):
+            continue
+        rows.append(dict(zip(cols.FREETIME_ROW_FIELDS, values)))
+    return rows
 
 # Deliberate, user-directed or externally-assigned deviations that make
 # certain columns permanently non-matching between a fresh parse and a
@@ -427,3 +455,117 @@ def diff_cmdt_blocks(generated: list[dict[str, Any]], expected: list[dict[str, A
             field_mismatches.append((key, -1, "_row_count", len(g_rows), len(e_rows)))
 
     return BlockDiffResult(missing_blocks=missing_blocks, extra_blocks=extra_blocks, field_mismatches=field_mismatches)
+
+
+# --- ROUTE NOTE --------------------------------------------------------------
+# RN rows cannot be matched one-to-one against a reference: they are
+# addressed by (Header Seq, Route Seq), and OPUS assigns those itself -
+# LAWC's own filing numbers its headers from 1015, which no fresh parse
+# can reproduce. What IS comparable is how many times each note text
+# appears, and which service lane it names. That is exactly the check
+# tests/test_lawc_route_notes_reference.py already makes against real
+# ground truth, so the same shape is used here.
+def route_note_counts(rows: list[dict[str, Any]]) -> Counter:
+    return Counter(
+        (str(row.get("contents") or "").strip(), row.get("lane"))
+        for row in rows
+        if str(row.get("contents") or "").strip()
+    )
+
+
+# --- VERTICAL RATES ----------------------------------------------------------
+@dataclass
+class VerticalBlock:
+    """One route's worth of the long-format sheet.
+
+    The rows are a COLUMNAR encoding, not independent records: a block
+    starts where Route Seq is written, its origins and destinations run
+    down their own columns, and the container sizes run down another. A
+    row on its own is meaningless - "VNCMP" with no destination and no
+    rate is the second origin of the block above it, not a route. So the
+    block is the unit of comparison, and its origins and destinations are
+    SETS rather than ordered lists.
+    """
+
+    origins: frozenset
+    destinations: frozenset
+    origin_term: Any
+    destination_term: Any
+    o_via: Any
+    d_via: Any
+    rates: tuple
+
+    @property
+    def key(self) -> tuple:
+        # Cargo type belongs in the key: one route commonly files a dry
+        # block and a reefer block back to back (AUADL->BEANR appears
+        # twice on TAD's own sheet, D2/D4/D5 as DR then R2/R5 as RF).
+        # Without it 675 real blocks collapse onto 396 keys and the diff,
+        # which is dict-based, would drop the rest unseen.
+        return (
+            tuple(sorted(self.origins)), tuple(sorted(self.destinations)),
+            self.origin_term, self.destination_term, self.o_via, self.d_via,
+            tuple(sorted({cargo for _per, cargo, _rate in self.rates if cargo})),
+        )
+
+
+def reconstruct_vertical_blocks(rows: list[dict[str, Any]]) -> list[VerticalBlock]:
+    """A non-blank Route Seq opens a block; every row until the next one
+    belongs to it."""
+    blocks: list[VerticalBlock] = []
+    origins: list = []
+    destinations: list = []
+    rates: list = []
+    head: dict[str, Any] = {}
+
+    def flush() -> None:
+        if head:
+            blocks.append(VerticalBlock(
+                origins=frozenset(origins), destinations=frozenset(destinations),
+                origin_term=head.get("origin_term"), destination_term=head.get("destination_term"),
+                o_via=head.get("o_via_code"), d_via=head.get("d_via_code"),
+                rates=tuple(sorted(rates, key=str)),
+            ))
+
+    for row in rows:
+        if row.get("route_seq") not in (None, ""):
+            flush()
+            origins, destinations, rates = [], [], []
+            head = row
+        if row.get("origin_code"):
+            origins.append(row["origin_code"])
+        if row.get("destination_code"):
+            destinations.append(row["destination_code"])
+        if row.get("per") or row.get("rate") is not None:
+            rates.append((row.get("per"), row.get("cargo_type"), _normalize(row.get("rate"))))
+    flush()
+    return blocks
+
+
+def diff_vertical_blocks(
+    generated: list[dict[str, Any]], expected: list[dict[str, Any]]
+) -> tuple[list[tuple], list[tuple], list[tuple]]:
+    """(missing keys, extra keys, [(key, yours, theirs)] where the rates differ)."""
+    gen = {b.key: b for b in reconstruct_vertical_blocks(generated)}
+    exp = {b.key: b for b in reconstruct_vertical_blocks(expected)}
+    missing = sorted(set(exp) - set(gen), key=str)
+    extra = sorted(set(gen) - set(exp), key=str)
+    differing = [
+        (key, gen[key].rates, exp[key].rates)
+        for key in sorted(set(gen) & set(exp), key=str)
+        if gen[key].rates != exp[key].rates
+    ]
+    return missing, extra, differing
+
+
+# --- FREETIME ----------------------------------------------------------------
+def freetime_row_key(row: dict[str, Any]) -> tuple:
+    return (_normalize(row.get("seq")),)
+
+
+def freetime_compared_fields() -> list[str]:
+    """Everything except the columns OPUS assigns itself. We write the
+    header for those but leave the VALUES blank (see
+    opus_columns.FREETIME_UNFILED_FIELDS), so they could never match a
+    reference that carries them."""
+    return [f for f in cols.FREETIME_ROW_FIELDS if f not in cols.FREETIME_UNFILED_FIELDS]
