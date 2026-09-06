@@ -289,6 +289,11 @@ DRY_SECTIONS = [
 ]
 
 REEFER_CONFIG = ("R", "RF")
+# Reefer's dangerous twin: same prefix, same rates, same route note, only
+# the CGO type changes. Confirmed against reference/2_OPUS/15_LAWC FAK's
+# real RATES sheet, where all 192 R/DG rows match an R/RF row exactly on
+# origin, destination, all four rate columns and route note.
+REEFER_DG_CONFIG = ("R", "DG")
 NOR_CONFIG = ("R", "DR")
 OOG_POD_CODE_ROW, OOG_CONTAINER_LABEL_ROW = 7, 8
 # Rows 31-46 are a verbatim repeat of rows 9-24 (confirmed identical rate
@@ -581,14 +586,20 @@ class LAWCParser(BaseMRGParser):
                 note_specs.append(CommodityNoteSpec(description, validity_start, validity_end, charge_codes))
 
         # Reefer + NOR: both Prefix "R", rate in the 40HC slot, both share
-        # G0001 (main)'s code by default, no DG duplicate. Each defaults to
-        # its OWN description now (see COMMODITY_MAIN's comment above), and
-        # each is independently overridable (code/description/cmdt_seq)
-        # since each has its own default description to key by.
+        # G0001 (main)'s code by default. Each defaults to its OWN
+        # description now (see COMMODITY_MAIN's comment above), and each is
+        # independently overridable (code/description/cmdt_seq) since each
+        # has its own default description to key by.
+        #
+        # Both get a DG twin, and the two twins differ - see
+        # REEFER_DG_CONFIG and _nor_dg_route_note:
+        #   Reefer (R/RF) -> R/DG, an otherwise identical row.
+        #   NOR    (R/DR) -> D/DG, carrying "REEFER DRY AS DANGEROUS".
+        # Both stay in the group they came from, which is how the real
+        # filing has them: its G0004 "NOR & REEFER" holds all four of
+        # R/RF, R/DG, R/DR and D/DG.
         main_code = COMMODITY_MAIN[0]
         main_validity_start, main_validity_end = data.validity.get(main_code, (None, None))
-        sea_output_code = resolve_commodity_code(COMMODITY_SEA[1], COMMODITY_SEA[0], config)
-        sea_description = resolve_commodity_description(COMMODITY_SEA[1], config)
         for rows, (prefix, cgo_type), default_description in (
             (data.reefer_rows, REEFER_CONFIG, REEFER_DEFAULT_DESCRIPTION),
             (data.nor_rows, NOR_CONFIG, NOR_DEFAULT_DESCRIPTION),
@@ -598,7 +609,7 @@ class LAWCParser(BaseMRGParser):
             variant_cmdt_seq = config.commodity_sequence_overrides.get(default_description)
             variant_output_code = resolve_commodity_code(default_description, main_code, config)
             variant_rows, variant_pp = [], []
-            nor_dg_rows, nor_dg_pp = [], []
+            dg_rows, dg_pp = [], []
             for sr in rows:
                 origin_codes = self._resolve_codes(sr.origin_code_raw)
                 origin_names = [self._lookup_description(c) for c in origin_codes]
@@ -643,27 +654,24 @@ class LAWCParser(BaseMRGParser):
                         _explode_lawc(row, origin_name_map, dest_name_map), nor_reefer_code, nor_reefer_description
                     )
                 )
-                if is_nor and not config.skip_dg_generation.get(default_description, False):
-                    dg_row = row.model_copy(
-                        update={
-                            "prefix": "D",
-                            "cgo_type": "DG",
-                            "commodity_group_code": sea_output_code,
-                            "commodity_group_description": sea_description,
-                            "route_note": _sea_dg_route_note(row.route_note),
-                        }
+                if not config.skip_dg_generation.get(default_description, False):
+                    dg_update = (
+                        {"prefix": "D", "cgo_type": "DG", "route_note": _nor_dg_route_note(row.route_note)}
+                        if is_nor
+                        else {"prefix": REEFER_DG_CONFIG[0], "cgo_type": REEFER_DG_CONFIG[1]}
                     )
-                    nor_dg_rows.append(dg_row)
-                    sea_pp_code, sea_pp_description = PP_COMMODITY[COMMODITY_SEA[0]]
-                    nor_dg_pp.extend(
+                    dg_row = row.model_copy(update=dg_update)
+                    dg_rows.append(dg_row)
+                    dg_pp.extend(
                         _remap_pp_commodity(
-                            _explode_lawc(dg_row, origin_name_map, dest_name_map), sea_pp_code, sea_pp_description
+                            _explode_lawc(dg_row, origin_name_map, dest_name_map),
+                            nor_reefer_code, nor_reefer_description,
                         )
                     )
             rates.extend(group_by_destination(variant_rows))
-            rates.extend(group_by_destination(nor_dg_rows))
+            rates.extend(group_by_destination(dg_rows))
             rates_port_port.extend(group_by_destination(variant_pp))
-            rates_port_port.extend(group_by_destination(nor_dg_pp))
+            rates_port_port.extend(group_by_destination(dg_pp))
             if variant_rows:
                 note_specs.append(
                     CommodityNoteSpec(description, main_validity_start, main_validity_end, MAIN_CHARGE_CODES)
@@ -903,19 +911,23 @@ def _oog_route_note(equipment: str, kci: bool) -> str | None:
 
 # "REEFER DRY AS DANGEROUS" - user-confirmed (2026-08-26, not derivable
 # from raw MRG text): Non-Operating Reefer ("LAWC NOR" sheet) cargo that's
-# dangerous gets filed as D/DG (folded into G0004/S.E.A_JPN_SA_AU_NZ's
-# regular dry-and-dangerous bucket) instead of R/DG, with this route note
-# explaining why. Applies ONLY to NOR (never Reefer - REEFER_CONFIG's
-# cgo_type "RF" never matches the DR-only DG-duplication rule anyway, so
-# Reefer never had a DG variant to begin with) - see the nor_rows branch
-# below. Combines with any route_note the NOR row already carries (e.g.
-# COBUN's AX3 vessel-lane note) via " | ", confirmed against
-# reference/2_OPUS/15_LAWC FAK and 17_LAWC TIER 1's real RN/RATES sheets.
-SEA_DG_ROUTE_NOTE = "REEFER DRY AS DANGEROUS"
+# dangerous is filed as D/DG rather than R/DG, and this note is what says
+# why. Applies ONLY to NOR; Reefer's own dangerous twin is a plain R/DG
+# with no note at all (see REEFER_DG_CONFIG). Combines with any route_note
+# the NOR row already carries (e.g. COBUN's AX3 vessel-lane note) via
+# " | ", confirmed against reference/2_OPUS/15_LAWC FAK and 17_LAWC
+# TIER 1's real RN/RATES sheets.
+#
+# These rows stay in NOR's own commodity group. They used to be moved into
+# COMMODITY_SEA's, on a reading of the user's "G0004" that matched this
+# file's internal SEA code rather than the real filing's G0004 - which is
+# "NOR & REEFER", and which holds every R/RF, R/DG, R/DR and D/DG row in
+# the reference file while the SEA group's DR and DG counts stay equal.
+NOR_DG_ROUTE_NOTE = "REEFER DRY AS DANGEROUS"
 
 
-def _sea_dg_route_note(existing: str | None) -> str:
-    return f"{SEA_DG_ROUTE_NOTE} | {existing}" if existing else SEA_DG_ROUTE_NOTE
+def _nor_dg_route_note(existing: str | None) -> str:
+    return f"{NOR_DG_ROUTE_NOTE} | {existing}" if existing else NOR_DG_ROUTE_NOTE
 
 
 def _classify_oog_equipment(container_label: str) -> str:

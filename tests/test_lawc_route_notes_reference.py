@@ -31,18 +31,15 @@ pytestmark = pytest.mark.skipif(
     reason="reference/ ground-truth files not present in this checkout",
 )
 
-# Reefer/NOR (prefix "R") rows are excluded from both checks below: this
-# reference file's own commodity_group_code for NOR is G0004, but that
-# code is a user-customizable override (confirmed - see
-# project-opus-note-sheet-taxonomy memory), not a derivable default, so a
-# fresh parse with no override applied can't be expected to reproduce
-# whatever code this particular filing batch was actually override'd to.
-# Separately, NOR's DR rows don't get a DG-duplicate at all yet (a real,
-# but out-of-scope-for-this-task gap - see that same memory) - which is
-# the other reason its route notes (REEFER DRY AS DANGEROUS combined with
-# AX3) can't be reproduced here. HNSLO/OOG/the main SEA grid's own DG rows
-# are unaffected by either gap and are exactly what this test verifies.
-_NOR_PREFIX = "R"
+# Reefer/NOR (prefix "R") rows are in scope now. They used to be excluded
+# for two reasons, and only one of them was ever about route notes: NOR's
+# DR rows had no DG duplicate, so "REEFER DRY AS DANGEROUS | ... AX3"
+# could not be reproduced. Both DG twins are generated now (see
+# test_parsers_lawc.test_lawc_reefer_and_nor_dg_twins), so the note is
+# checked here like every other. The other reason - that this filing's
+# commodity_group_code is a user override a fresh parse cannot guess -
+# never affected these assertions: they compare route_note only, and
+# rates_row_key keys on locations and prefix/CGO type, not on commodity.
 
 
 def _run_lawc_fak():
@@ -51,20 +48,20 @@ def _run_lawc_fak():
 
 
 def test_lawc_route_note_text_matches_reference_rates_sheet():
-    """Every non-NOR RATES row's route_note text (HNSLO's MAR/MX2, OOG's
+    """Every RATES row's route_note text (HNSLO's MAR/MX2, OOG's
     KCI/OH/OWOH/OW cases including the blank-for-plain-in-gauge fix, and
-    the main SEA grid's own G0004 DG rows' REEFER DRY AS DANGEROUS note)
-    matches the real filed RATES sheet, keyed the same way
-    test_parsers_lawc.py's own RATES tests key rows. Only asserts on the
-    matched intersection (not missing/extra) - this reference file has
-    known, separately-tracked gaps unrelated to route notes (see the
-    _NOR_PREFIX comment, and the general "LAWC Tier 1/FAK real-file
-    fidelity" follow-up noted in project-opus-note-sheet-taxonomy)."""
+    NOR's D/DG twins carrying REEFER DRY AS DANGEROUS, alone or joined to
+    a vessel-lane note) matches the real filed RATES sheet, keyed the
+    same way test_parsers_lawc.py's own RATES tests key rows. Only
+    asserts on the matched intersection (not missing/extra) - this
+    reference file has known, separately-tracked gaps unrelated to route
+    notes (the general "LAWC Tier 1/FAK real-file fidelity" follow-up
+    noted in project-opus-note-sheet-taxonomy)."""
     row_set = _run_lawc_fak()
-    generated = [r.model_dump() for r in row_set.rates if r.prefix != _NOR_PREFIX]
+    generated = [r.model_dump() for r in row_set.rates]
 
     ref_wb = openpyxl.load_workbook(OPUS_PATH, data_only=True, read_only=True)
-    expected = [r for r in read_rates_sheet(ref_wb, "RATES") if r.get("prefix") != _NOR_PREFIX]
+    expected = read_rates_sheet(ref_wb, "RATES")
 
     result = diff_by_key(generated, expected, key_fn=rates_row_key, fields=["route_note"])
     assert result.matched > 0, "expected at least some matched rows to actually verify route_note against"
@@ -147,8 +144,8 @@ def test_san_lorenzo_rows_are_filed_for_every_dry_sheet():
 
     # This lane's structural codes: MAIN G0001, ISC G0003, SEA G0004. The
     # reference files MAIN/SEA/ISC as G0001/G0002/G0003 - commodity codes
-    # are a user override, not a derivable default (see the _NOR_PREFIX
-    # note above), so the two are mapped rather than compared.
+    # are a user override, not a derivable default (see the header
+    # comment), so the two are mapped rather than compared.
     for ref_code, our_code in (("G0001", "G0001"), ("G0002", "G0004"), ("G0003", "G0003")):
         expected = Counter(
             (r["origin_code"], r.get("o_via_code"))

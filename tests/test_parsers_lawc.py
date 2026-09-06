@@ -39,12 +39,6 @@ RATES_IGNORE_FIELDS = {
 }
 PORT_PORT_IGNORE_FIELDS = RATES_IGNORE_FIELDS
 
-# NOR's DG-duplicate rows (see SEA_DG_ROUTE_NOTE in mrg2opus.parsers.lawc)
-# always carry the literal "REEFER DRY AS DANGEROUS" text (unconditionally,
-# by construction), so filtering on that substring precisely identifies
-# them - see test_lawc_route_notes_reference.py for their own dedicated,
-# real-ground-truth-verified coverage; this file only checks non-NOR rows.
-_NOR_DG_MARKER = "REEFER DRY AS DANGEROUS"
 
 # Real, confirmed gap found migrating this test to reference/ ground truth
 # (2026-08-26): the SEA grid's Central/South America destinations (Mexico,
@@ -61,23 +55,65 @@ _KNOWN_MISSING_DESTINATIONS = {
 }
 
 
+# The "PEPAI needs its own R/DG" exclusion that used to live here read a
+# general rule off one destination: R/DG is Reefer's DG twin for EVERY
+# route, all 192 of them, and PEPAI was simply the corner of the grid the
+# gap was first noticed in. Both DG twins are generated now, so nothing
+# about them is filtered out below - see test_lawc_reefer_and_nor_dg_twins.
 def _drop_known_gaps(rows: list[dict]) -> list[dict]:
-    return [
-        r for r in rows
-        if not (r.get("route_note") or "").startswith(_NOR_DG_MARKER)
-        and r.get("destination_code") not in _KNOWN_MISSING_DESTINATIONS
-        # 12 more real rows: NOR also needs a plain R/DG duplicate (no
-        # REEFER route note at all, unlike COBUN's D/DG+note case) for
-        # PEPAI specifically - a third NOR-DG variant found migrating this
-        # test, not implemented, same follow-up territory as the others.
-        and not (r.get("destination_code") == "PEPAI" and r.get("prefix") == "R" and r.get("cgo_type") == "DG")
-    ]
+    return [r for r in rows if r.get("destination_code") not in _KNOWN_MISSING_DESTINATIONS]
 
 
 def _run_lawc():
     wb = openpyxl.load_workbook(RAW_PATH, data_only=True)
     parser = LAWCParser()
     return parser.run(wb, MappingProfile())
+
+
+def test_lawc_reefer_and_nor_dg_twins():
+    """Reefer and NOR each get a dangerous twin, and the two are not the
+    same shape.
+
+    Reefer's is R/DG: the same row with a different CGO type. NOR's is
+    D/DG - a reefer box carrying dry cargo that happens to be dangerous
+    is filed as dry, which is what its "REEFER DRY AS DANGEROUS" route
+    note exists to explain. Both stay in the commodity group they came
+    from; the real filing's G0004 "NOR & REEFER" holds all four kinds.
+
+    Counted against the real filing rather than against a fixed number,
+    so this says "every reefer route has a dangerous twin" rather than
+    "there are 192 of them".
+    """
+    row_set = _run_lawc()
+    ours = [r.model_dump() for r in row_set.rates]
+
+    ref_wb = openpyxl.load_workbook(OPUS_PATH, data_only=True, read_only=True)
+    expected = read_rates_sheet(ref_wb, "RATES")
+
+    def routes(rows, prefix, cgo, note_prefix=None):
+        return {
+            rates_row_key(r) for r in rows
+            if (r.get("prefix"), r.get("cgo_type")) == (prefix, cgo)
+            and (note_prefix is None or str(r.get("route_note") or "").startswith(note_prefix))
+        }
+
+    reefer = routes(ours, "R", "RF")
+    reefer_dg = {k[:2] + k[4:] for k in routes(ours, "R", "DG")}
+    assert reefer_dg == {k[:2] + k[4:] for k in reefer}, "every Reefer route should have an R/DG twin"
+
+    nor_dg = routes(ours, "D", "DG", "REEFER DRY AS DANGEROUS")
+    assert len(nor_dg) == len(routes(ours, "R", "DR")), "every NOR route should have a D/DG twin"
+
+    for prefix, cgo in (("R", "RF"), ("R", "DG"), ("R", "DR")):
+        assert routes(ours, prefix, cgo) == routes(expected, prefix, cgo), f"{prefix}/{cgo} routes differ from the real filing"
+
+    # The twins belong to the group they came from, not to a dry group.
+    dg_groups = {
+        r["commodity_group_description"] for r in ours
+        if str(r.get("route_note") or "").startswith("REEFER DRY AS DANGEROUS")
+    }
+    nor_groups = {r["commodity_group_description"] for r in ours if (r["prefix"], r["cgo_type"]) == ("R", "DR")}
+    assert dg_groups == nor_groups
 
 
 def test_lawc_rates_matches_ground_truth():
