@@ -631,7 +631,12 @@ def _render_results(results: list[dict], explained_overrides: dict[str, str],
                 "Sheet": r["sheet_type"],
                 "Sub-lane": r["sub_lane"],
                 "In reference?": "Yes" if r["found_in_reference"] else "No - sheet not found",
-                "Matched": r["matched"] if r["matched"] is not None else "-",
+                # None, not "-": the note sheets have no row-level matched
+                # count, and mixing a placeholder string into a column of
+                # integers is what Arrow refuses to type - the same fault
+                # the detail grids had. A blank cell reads the same and
+                # keeps the column sortable as a number.
+                "Matched": r["matched"],
                 "Missing": len(r["missing"]),
                 "Not filed on purpose": len(r["intentionally_absent"]),
                 "Extra": len(r["extra"]),

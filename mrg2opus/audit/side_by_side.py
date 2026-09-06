@@ -142,6 +142,12 @@ def build_side_by_side_workbook(pairs: list[tuple[str, list[dict], list[dict]]])
         _write_side(wb, ours_title, ours, ref_title, "REFERENCE")
         _write_side(wb, ref_title, theirs, ours_title, "YOUR DRAFT")
 
+    # Every cell we write is a formula with no cached result, and Excel
+    # trusts a saved workbook's stored results by default - so it opens
+    # showing nothing until each cell is entered by hand. This is the flag
+    # that tells it to calculate the whole book on load.
+    wb.calculation.fullCalcOnLoad = True
+
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()

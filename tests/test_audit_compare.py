@@ -432,3 +432,17 @@ def test_the_rate_columns_are_part_of_the_key_formula():
     from openpyxl.utils import get_column_letter
     rate_col = get_column_letter(3 + cols.RATES_ROW_FIELDS.index("rate_20"))
     assert f"{rate_col}2" in formula
+
+
+def test_the_workbook_asks_excel_to_calculate_on_open():
+    """Every cell we write is a formula with no cached result, and Excel
+    trusts a saved workbook's stored results - so without this it opens
+    blank until each cell is entered by hand."""
+    import re
+    import zipfile
+
+    rows = [dict.fromkeys(cols.RATES_ROW_FIELDS)]
+    data = build_side_by_side_workbook([("RATES", rows, rows)])
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        book = archive.read("xl/workbook.xml").decode()
+    assert re.search(r'<calcPr[^>]*fullCalcOnLoad="1"', book)
