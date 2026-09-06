@@ -7,6 +7,7 @@ from mrg2opus.parsers.registry import get_profile
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.ui.commodity_utils import assign_sequential_default_codes, distinct_commodity_groups
 from mrg2opus.ui.errors import show_error
+from mrg2opus.ui.filing_settings import reset_filing_settings
 from mrg2opus.ui.parsing import VERTICAL_RATES_ROW_CAP, run_parser, vertical_rates_over_cap
 from mrg2opus.ui.sheets import output_sheets
 from mrg2opus.ui.state import WizardState
@@ -83,6 +84,7 @@ def render(state: WizardState) -> None:
     # must be taken override-free (see the snapshot comment above).
     if st.button("↻ Re-parse from source", help="Discards the cached parse and any customizations, then re-reads the uploaded workbook."):
         state.profile = MappingProfile()
+        reset_filing_settings("convert")
         state.row_sets = None
         state.default_commodity_groups = []
         state.output_bytes = None

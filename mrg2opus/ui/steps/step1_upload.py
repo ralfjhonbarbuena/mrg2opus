@@ -6,6 +6,7 @@ from mrg2opus.excel_io.merge import DuplicateSheetError
 from mrg2opus.parsers.registry import all_profiles
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.ui.errors import show_error
+from mrg2opus.ui.filing_settings import reset_filing_settings
 from mrg2opus.ui.mrg_upload import fingerprint_uploads, load_and_classify
 from mrg2opus.ui.state import WizardState
 
@@ -40,6 +41,9 @@ def render(state: WizardState) -> None:
         state.classification_results = []
         state.selected_lane_id = None
         state.profile = MappingProfile()
+        # The settings widgets outlive the profile, so clearing one without
+        # the other leaves the previous file's edits on screen.
+        reset_filing_settings("convert")
         state.row_sets = None
         state.default_commodity_groups = []
         state.output_bytes = None

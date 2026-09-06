@@ -56,9 +56,10 @@ from mrg2opus.parsers.registry import ClassificationResult, get_profile
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema import opus_columns as cols
 from mrg2opus.ui.errors import show_error
+from mrg2opus.ui.commodity_utils import assign_sequential_default_codes, distinct_commodity_groups
+from mrg2opus.ui.filing_settings import render_filing_settings, reset_filing_settings
 from mrg2opus.ui.mrg_upload import fingerprint_uploads, load_and_classify
 from mrg2opus.ui.parsing import run_parser
-from mrg2opus.ui.state import get_state as get_wizard_state
 
 RATES_MODE_OPTIONS = ["Grouped (RATES)", "Exploded (RATES PORT-PORT)", "Both"]
 
@@ -79,11 +80,16 @@ class CompareState:
     reference_workbook: Workbook | None = None
     rates_mode: str = "Both"
     apply_known_gaps: bool = True
-    # Whether to parse with the settings configured in Convert, or with a
-    # default profile. Compare used to be hardwired to defaults, so it
-    # silently answered "what does the tool produce unaided?" rather than
-    # "is the file I am about to upload right?".
-    use_wizard_profile: bool = True
+    # The settings the MRG is parsed with. Compare owns its own rather
+    # than borrowing Convert's: the auditor drafts the filing
+    # independently and then reconciles, so they need their own controls,
+    # not a pointer at the processor's.
+    profile: MappingProfile = field(default_factory=MappingProfile)
+    # The parser's own (code, description) pairs, snapshotted from a
+    # first override-free parse - what the settings editor lists.
+    default_commodity_groups: list[tuple[str, str]] = field(default_factory=list)
+    # Which lane that snapshot was taken for, so switching lane re-takes it.
+    groups_lane_id: str | None = None
     skip_sheets: list[str] = field(default_factory=list)
     row_sets: dict[str, Any] | None = None
     compare_results: list[dict[str, Any]] | None = None
@@ -94,7 +100,7 @@ class CompareState:
     duplicate_filings: list[dict[str, Any]] = field(default_factory=list)
     # (sheet label, our rows, the reference's rows) for the paired workbook.
     side_by_side: list[tuple] = field(default_factory=list)
-    # (lane_id, rates_mode, apply_known_gaps, use_wizard_profile) at the moment compare_results
+    # (lane_id, rates_mode, apply_known_gaps, settings, skipped sheets) at the moment compare_results
     # was computed - lets render() detect when the visible results no
     # longer match the current control settings, instead of silently
     # showing a stale comparison after the user changes lane/mode/toggle
@@ -782,6 +788,7 @@ def render() -> None:
         state.workbook = None
         state.classification_results = []
         state.selected_lane_id = None
+        state.groups_lane_id = None
         state.reference_workbook = None
         state.row_sets = None
         state.compare_results = None
@@ -838,23 +845,35 @@ def render() -> None:
              "(e.g. `type`, externally-assigned sequence numbers) - see MIGRATION_NOTES.md.",
     )
 
-    # Which settings the MRG is parsed with. Compare used to be hardwired
-    # to a default profile, so it answered "what does the tool produce
-    # unaided?" rather than "is the file I am about to upload right?" -
-    # and anything customized in Convert was invisible to it.
-    wizard_profile = get_wizard_state().profile
-    customized = bool(explain_profile_overrides(wizard_profile)) or profile_skips_rows(wizard_profile)
-    state.use_wizard_profile = st.checkbox(
-        "Use the settings from Convert",
-        value=state.use_wizard_profile,
-        help=(
-            "Compare the output you actually configured — your commodity codes, descriptions, "
-            "sequence numbers and any groups you chose not to file. Uncheck to compare the tool's "
-            "unaided output against the reference instead."
-        ),
-    )
-    if state.use_wizard_profile and not customized:
-        st.caption("Nothing is customized in Convert yet, so this is the same as the tool's default output.")
+    # The settings live here rather than being inherited from Convert.
+    # The comparison is an audit: the auditor builds their own draft and
+    # reconciles it against the reference, so the draft has to be
+    # theirs - and a setting they cannot see is one they cannot account
+    # for when a column comes back different.
+    if state.groups_lane_id != selected:
+        # A different lane has different commodity groups, so the settings
+        # made against the old one no longer refer to anything.
+        reset_filing_settings("compare")
+        parser_cls = get_profile(selected).parser_cls
+        with st.spinner("Reading the MRG's commodity groups..."):
+            base_rows = run_parser(parser_cls(), state.workbook, MappingProfile())
+        state.default_commodity_groups = distinct_commodity_groups(base_rows)
+        # Same sequential G0001, G0002, ... default Convert seeds after
+        # its first parse - so both screens start from the same draft and
+        # a difference between them is a difference someone chose.
+        state.profile = MappingProfile(
+            commodity_code_overrides=assign_sequential_default_codes(state.default_commodity_groups)
+        )
+        state.groups_lane_id = selected
+
+    with st.expander("Filing settings - how your draft is built", expanded=False):
+        st.caption(
+            "These shape the draft being compared, exactly as they do in Convert. "
+            "Differences they cause are reported separately, as presentation rather than substance."
+        )
+        state.profile = render_filing_settings(
+            state.profile, state.default_commodity_groups, selected, key_prefix="compare"
+        )
 
     state.skip_sheets = st.multiselect(
         "Skip these sheets",
@@ -864,10 +883,13 @@ def render() -> None:
              "ROUTE NOTE and VERTICAL RATES are the slowest to check.",
     )
 
-    profile = wizard_profile if state.use_wizard_profile else MappingProfile()
+    profile = state.profile
     current_settings = (
         state.selected_lane_id, state.rates_mode, state.apply_known_gaps,
-        state.use_wizard_profile, tuple(sorted(state.skip_sheets)),
+        # The settings in full, not a "customized?" flag: changing one
+        # commodity code changes the draft, and the staleness warning
+        # below has to notice that.
+        profile.model_dump_json(), tuple(sorted(state.skip_sheets)),
     )
 
     if st.button("Run Comparison", type="primary"):
@@ -888,7 +910,7 @@ def render() -> None:
     if state.compare_results is not None:
         if state.results_computed_for != current_settings:
             st.warning(
-                "⚠️ Lane, RATES mode, the known-gaps toggle, the profile choice or the skipped sheets "
+                "⚠️ Lane, RATES mode, the known-gaps toggle, the filing settings or the skipped sheets "
                 "changed since this comparison ran - click **Run Comparison** to refresh before trusting these results."
             )
         _render_results(state.compare_results, state.explained_overrides,
