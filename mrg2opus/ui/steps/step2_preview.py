@@ -5,7 +5,12 @@ import streamlit as st
 
 from mrg2opus.parsers.registry import get_profile
 from mrg2opus.presets.models import MappingProfile
-from mrg2opus.ui.commodity_utils import assign_sequential_default_codes, distinct_commodity_groups
+from mrg2opus.ui.commodity_utils import (
+    assign_sequential_default_codes,
+    dg_twin_probe,
+    distinct_commodity_groups,
+    groups_offering_dg_twins,
+)
 from mrg2opus.ui.errors import show_error
 from mrg2opus.ui.filing_settings import reset_filing_settings
 from mrg2opus.ui.parsing import VERTICAL_RATES_ROW_CAP, run_parser, vertical_rates_over_cap
@@ -38,7 +43,12 @@ def render(state: WizardState) -> None:
     if state.row_sets is None:
         with st.spinner("Parsing..."):
             try:
-                state.row_sets = _run_parser(state, state.profile)
+                # Parsed through a probe, which answers every skip-DG
+                # lookup exactly as the profile's own dict would - so the
+                # parse is unchanged and we learn, for free, which groups
+                # the parser even offers a DG twin for.
+                probe = dg_twin_probe(state.profile)
+                state.row_sets = _run_parser(state, probe)
             except Exception as exc:  # noqa: BLE001 - surfaced directly, this is a real parse failure
                 show_error(
                     "Parsing failed - this usually means something in the file doesn't match "
@@ -53,6 +63,7 @@ def render(state: WizardState) -> None:
             # from this FIRST parse, before Step 3 applies any overrides -
             # see WizardState.default_commodity_groups.
             state.default_commodity_groups = distinct_commodity_groups(state.row_sets)
+            state.dg_twin_groups = groups_offering_dg_twins(probe)
 
             # User-directed (2026-08-27): every distinct group gets its own
             # unique output code (G0001, G0002, ...) by default, instead of
@@ -87,6 +98,7 @@ def render(state: WizardState) -> None:
         reset_filing_settings("convert")
         state.row_sets = None
         state.default_commodity_groups = []
+        state.dg_twin_groups = frozenset()
         state.output_bytes = None
         st.rerun()
 

@@ -9,6 +9,7 @@ import pytest
 from mrg2opus.audit.compare import _normalize, diff_by_key, rates_row_key, read_rates_sheet
 from mrg2opus.parsers.lawc import COMMODITY_MAIN, LAWCParser
 from mrg2opus.presets.models import MappingProfile
+from mrg2opus.ui.commodity_utils import dg_twin_probe, groups_offering_dg_twins
 from mrg2opus.schema import opus_columns as cols
 
 REFERENCE_DIR = Path(__file__).resolve().parents[1] / "reference"
@@ -332,3 +333,16 @@ def test_lawc_freetime_matches_ground_truth(raw_path, opus_path):
         for field_name in cols.FREETIME_ROW_FIELDS:
             gv, ev = _norm(g.get(field_name)), _norm(e.get(field_name))
             assert gv == ev, f"row {i} {field_name}: {gv!r} != {ev!r}"
+
+
+def test_lawc_offers_skip_dg_only_where_there_is_a_twin_to_skip():
+    """OOG has no DG twin, so the settings must not offer to drop one -
+    which is what the DG probe is for. Reefer and NOR do have twins now,
+    so they must still be offered."""
+    probe = dg_twin_probe(MappingProfile())
+    wb = openpyxl.load_workbook(RAW_PATH, data_only=True)
+    LAWCParser().run(wb, probe)
+
+    offered = groups_offering_dg_twins(probe)
+    assert "OOG" not in offered
+    assert {"Reefer", "LAWC NOR"} <= offered

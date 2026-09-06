@@ -46,6 +46,7 @@ def render(state: WizardState) -> None:
         reset_filing_settings("convert")
         state.row_sets = None
         state.default_commodity_groups = []
+        state.dg_twin_groups = frozenset()
         state.output_bytes = None
 
     if state.workbook is None:

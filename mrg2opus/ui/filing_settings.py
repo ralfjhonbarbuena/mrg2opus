@@ -62,6 +62,7 @@ def reset_filing_settings(prefix: str) -> None:
 def render_filing_settings(
     profile: MappingProfile,
     groups: list[tuple[str, str]],
+    dg_twin_groups: frozenset[str],
     lane_id: str | None,
     key_prefix: str,
 ) -> MappingProfile:
@@ -69,6 +70,8 @@ def render_filing_settings(
 
     `groups` is the parser's own (code, description) pairs from an
     override-free parse - the identities every override dict is keyed by.
+    `dg_twin_groups` names the subset of those that get a D/DG or R/DG
+    twin at all, from commodity_utils.groups_offering_dg_twins().
 
     Returns a NEW profile built from what is on screen rather than
     mutating the one passed in, so the caller decides when it takes
@@ -84,8 +87,7 @@ def render_filing_settings(
         "NOTE block. This table doesn't support mouse dragging to reorder rows, but **Order** does the same "
         "job: lower numbers appear first on the generated OPUS RATES / RATES PORT-PORT / CMDT NOTE sheets. "
         "Leave **CMDT Seq** blank to let the tool number the group itself. **Skip Filing** leaves the group "
-        "out of the filing entirely; **Skip DG** keeps the group but drops only its D/DG duplicate rows - to "
-        "turn Dangerous Goods off for the whole filing instead, use the Dangerous Goods checkbox below."
+        "out of the filing entirely - to keep a group but drop only its DG rows, see Dangerous Goods below."
     )
     if groups:
         existing_order = profile.commodity_group_order
@@ -104,7 +106,6 @@ def render_filing_settings(
                 "description": profile.commodity_description_overrides.get(desc, desc),
                 "override_cmdt_seq": profile.commodity_sequence_overrides.get(desc),
                 "skip_filing": profile.skip_commodity_filing.get(desc, False),
-                "skip_dg": profile.skip_dg_generation.get(desc, False),
             }
             for i, (code, desc) in enumerate(groups)
         ]
@@ -133,7 +134,7 @@ def render_filing_settings(
             editor_rows,
             hide_index=True,
             width="stretch",
-            column_order=["order", "override_cmdt_seq", "code", "description", "skip_filing", "skip_dg"],
+            column_order=["order", "override_cmdt_seq", "code", "description", "skip_filing"],
             column_config={
                 "order": st.column_config.NumberColumn(
                     "Order", step=1, required=True,
@@ -154,10 +155,6 @@ def render_filing_settings(
                 "skip_filing": st.column_config.CheckboxColumn(
                     "Skip Filing",
                     help="Leave this commodity group out of the filing altogether.",
-                ),
-                "skip_dg": st.column_config.CheckboxColumn(
-                    "Skip DG",
-                    help="Keep the group, but don't file a D/DG duplicate of its base Dry rows.",
                 ),
             },
             key=_editor_key(key_prefix),
@@ -215,8 +212,8 @@ def render_filing_settings(
     # differ by lane family - TAD mirrors its own export tool's opt-IN
     # "Include Dry Dangerous" setting (off by default), every other lane
     # generates the duplicate by default and opts OUT - but the user sees
-    # the same checkbox either way, and non-TAD lanes keep the per-group
-    # "Skip DG" column above for finer control.
+    # the same checkbox either way, and non-TAD lanes get a per-group
+    # opt-out underneath it for finer control.
     st.markdown("#### Dangerous Goods (DG)")
     is_tad_lane = bool(lane_id and lane_id.startswith("TAD-"))
     group_descriptions = [desc for _code, desc in groups]
@@ -238,11 +235,38 @@ def render_filing_settings(
                 "Off by default for TAD filings, matching the team's own export tool."
                 if is_tad_lane
                 else "On by default for this lane. Unchecking it drops DG everywhere; to drop it for only "
-                "some commodity groups, leave this checked and use the Skip DG column above."
+                "some commodity groups, leave this checked and untick them below."
             )
         ),
         key=f"{key_prefix}_generate_dg",
     )
+
+    # Per-group opt-out, listing ONLY the groups that have a twin to drop.
+    # Which those are is read from the parser itself (see
+    # commodity_utils.groups_offering_dg_twins) rather than assumed: LAWC's
+    # OOG never gets one, and neither does any lane's Reefer or NOR except
+    # LAWC's. A checkbox that cannot do anything is worse than no checkbox,
+    # since a tick on it reads as a setting that was ignored.
+    skip_dg_choices: dict[str, bool] = {}
+    if not is_tad_lane and generate_dg:
+        with_twins = [desc for _code, desc in groups if desc in dg_twin_groups]
+        if with_twins:
+            st.caption("Only these groups get DG rows. Untick one to drop its DG rows and keep the rest.")
+            # Labelled with whatever the table says right now, not with
+            # the last applied description - on Convert those differ until
+            # Apply, and a group renamed a line above should be findable
+            # here by its new name.
+            labels = {key: (r.get("description") or key) for r, key in zip(edited, row_keys)}
+            cols_dg = st.columns(min(3, len(with_twins)))
+            for i, desc in enumerate(with_twins):
+                with cols_dg[i % len(cols_dg)]:
+                    skip_dg_choices[desc] = not st.checkbox(
+                        labels.get(desc, desc),
+                        value=not profile.skip_dg_generation.get(desc, False),
+                        key=f"{key_prefix}_dg_group_{desc}",
+                    )
+        else:
+            st.caption("No commodity group in this file gets DG rows, so there is nothing to drop per group.")
 
     generate_tad_dg_duplicate = generate_dg if is_tad_lane else profile.generate_tad_dg_duplicate
     include_tad_d7 = profile.include_tad_d7
@@ -297,13 +321,14 @@ def render_filing_settings(
         if r.get("override_cmdt_seq") not in (None, "")
     }
     skip_commodity_filing = {key: True for r, key in rows if r.get("skip_filing")}
-    # Master DG toggle wins when it's off (skip every group);
-    # when on, the per-group Skip DG column decides. TAD lanes
-    # don't use this dict at all - their toggle is the bool below.
+    # Master DG toggle wins when it's off (skip every group, so the
+    # "is DG on?" reading at the top of the section still says off on the
+    # next run); when on, the per-group checkboxes decide. TAD lanes don't
+    # use this dict at all - their toggle is the bool below.
     if not generate_dg and not is_tad_lane:
         skip_dg_generation = {key: True for _r, key in rows}
     else:
-        skip_dg_generation = {key: True for r, key in rows if r.get("skip_dg")}
+        skip_dg_generation = {desc: True for desc, skip in skip_dg_choices.items() if skip}
     # The FINAL description (post-override) of each row, sorted by
     # its "Order" value - this is what actually ends up on the
     # output rows, so it's what group_order needs to match against

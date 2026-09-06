@@ -55,8 +55,13 @@ from mrg2opus.excel_io.writer import resolve_sheet_names
 from mrg2opus.parsers.registry import ClassificationResult, get_profile
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema import opus_columns as cols
+from mrg2opus.ui.commodity_utils import (
+    assign_sequential_default_codes,
+    dg_twin_probe,
+    distinct_commodity_groups,
+    groups_offering_dg_twins,
+)
 from mrg2opus.ui.errors import show_error
-from mrg2opus.ui.commodity_utils import assign_sequential_default_codes, distinct_commodity_groups
 from mrg2opus.ui.filing_settings import render_filing_settings, reset_filing_settings
 from mrg2opus.ui.mrg_upload import fingerprint_uploads, load_and_classify
 from mrg2opus.ui.parsing import run_parser
@@ -88,6 +93,8 @@ class CompareState:
     # The parser's own (code, description) pairs, snapshotted from a
     # first override-free parse - what the settings editor lists.
     default_commodity_groups: list[tuple[str, str]] = field(default_factory=list)
+    # Which of those get a DG twin - see WizardState.dg_twin_groups.
+    dg_twin_groups: frozenset[str] = frozenset()
     # Which lane that snapshot was taken for, so switching lane re-takes it.
     groups_lane_id: str | None = None
     skip_sheets: list[str] = field(default_factory=list)
@@ -856,8 +863,12 @@ def render() -> None:
         reset_filing_settings("compare")
         parser_cls = get_profile(selected).parser_cls
         with st.spinner("Reading the MRG's commodity groups..."):
-            base_rows = run_parser(parser_cls(), state.workbook, MappingProfile())
+            # Probed, like step 2's first parse - same output, and it also
+            # tells us which groups have a DG twin to offer dropping.
+            probe = dg_twin_probe(MappingProfile())
+            base_rows = run_parser(parser_cls(), state.workbook, probe)
         state.default_commodity_groups = distinct_commodity_groups(base_rows)
+        state.dg_twin_groups = groups_offering_dg_twins(probe)
         # Same sequential G0001, G0002, ... default Convert seeds after
         # its first parse - so both screens start from the same draft and
         # a difference between them is a difference someone chose.
@@ -872,7 +883,8 @@ def render() -> None:
             "Differences they cause are reported separately, as presentation rather than substance."
         )
         state.profile = render_filing_settings(
-            state.profile, state.default_commodity_groups, selected, key_prefix="compare"
+            state.profile, state.default_commodity_groups, state.dg_twin_groups,
+            selected, key_prefix="compare",
         )
 
     state.skip_sheets = st.multiselect(
