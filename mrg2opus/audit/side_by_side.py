@@ -56,18 +56,23 @@ def _concat_formula(excel_row: int) -> str:
     that reads it - recompute, instead of silently describing the row as
     it was when the file was written.
 
-    TEXTJOIN with ignore_empty FALSE keeps blank positions, so the
-    separators still line up across rows. It also settles a difference
-    Excel would otherwise create: a rate held as 5800 on one sheet and
-    5800.0 on the other renders "5800" both times here, where building
-    the string in Python gives "5800" and "5800.0" and the two rows fail
-    to match each other.
+    Built with "&" rather than TEXTJOIN on purpose. TEXTJOIN postdates
+    the xlsx format, so Excel only recognises it in a file when it is
+    written as _xlfn.TEXTJOIN - a plain one evaluates to #NAME?, which is
+    also why retyping the cell by hand made it work: Excel reparses it
+    and stores the prefixed form. "&" has no such problem in any version.
+
+    A blank cell concatenates as empty, so the separators still line up
+    across rows. It also settles a difference building the string in
+    Python would create: a rate held as 5800 on one sheet and 5800.0 on
+    the other renders "5800" both times here, where str() gives "5800"
+    and "5800.0" and the two rows never find each other.
     """
-    refs = ",".join(
+    refs = [
         f"{get_column_letter(_DATA_START_COLUMN + cols.RATES_ROW_FIELDS.index(field))}{excel_row}"
         for field in AUDIT_CONCAT_FIELDS
-    )
-    return f'=TEXTJOIN("|",FALSE,{refs})'
+    ]
+    return "=" + '&"|"&'.join(refs)
 
 
 def _sheet_name(base: str, side: str) -> str:
@@ -88,8 +93,16 @@ def _write_side(wb: Workbook, title: str, rows: list[dict], other_title: str, ot
     for i, row in enumerate(rows, start=2):
         # The lookup is written out rather than the answer, so it stays
         # live: edit either sheet in Excel and the column re-evaluates.
+        #
+        # _xlfn. is required, not decoration. XLOOKUP postdates the xlsx
+        # format, and Excel only recognises a post-spec function in a
+        # FILE when it carries that prefix - written plainly it evaluates
+        # to #NAME?. Excel hides the prefix in the formula bar and
+        # re-adds it on save, so a cell retyped by hand looks identical
+        # and works, which is what made this look like a calculation
+        # problem rather than a spelling one.
         lookup = (
-            f"=XLOOKUP($A{i},'{quoted}'!$A:$A,'{quoted}'!$A:$A,\"NOT IN {other_label}\")"
+            f"=_xlfn.XLOOKUP($A{i},'{quoted}'!$A:$A,'{quoted}'!$A:$A,\"NOT IN {other_label}\")"
         )
         ws.append([
             _concat_formula(i), lookup,

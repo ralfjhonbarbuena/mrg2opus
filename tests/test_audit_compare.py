@@ -388,8 +388,8 @@ def test_side_by_side_pairs_each_sheet_and_points_the_lookups_at_each_other():
     assert ours["A1"].value == "MATCH KEY"
     # BOTH columns are live formulas, not baked answers, so they
     # re-evaluate after an edit to either sheet.
-    assert ours["A2"].value.startswith('=TEXTJOIN("|",FALSE,')
-    assert ours["B2"].value.startswith("=XLOOKUP(") and "'RATES (ref)'" in ours["B2"].value
+    assert ours["A2"].value.startswith("=") and '&"|"&' in ours["A2"].value
+    assert ours["B2"].value.startswith("=_xlfn.XLOOKUP(") and "'RATES (ref)'" in ours["B2"].value
     assert "'RATES (ours)'" in wb["RATES (ref)"]["B2"].value
 
 
@@ -414,7 +414,7 @@ def test_the_match_key_formula_points_at_this_row_and_covers_the_concat():
 
     # one reference per concat field, all on row 2, none on the key or
     # lookup columns themselves
-    refs = formula.removeprefix('=TEXTJOIN("|",FALSE,').removesuffix(")").split(",")
+    refs = formula.removeprefix("=").split('&"|"&')
     assert len(refs) == len(AUDIT_CONCAT_FIELDS)
     assert all(ref.endswith("2") for ref in refs)
     # not the key or lookup columns themselves - compared as whole column
@@ -446,3 +446,23 @@ def test_the_workbook_asks_excel_to_calculate_on_open():
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         book = archive.read("xl/workbook.xml").decode()
     assert re.search(r'<calcPr[^>]*fullCalcOnLoad="1"', book)
+
+
+def test_post_spec_functions_carry_the_prefix_excel_needs_in_a_file():
+    """XLOOKUP and TEXTJOIN postdate the xlsx format: written plainly they
+    evaluate to #NAME?, and Excel only accepts them in a FILE as
+    _xlfn.NAME. It hides the prefix in the formula bar and re-adds it on
+    save, so a cell retyped by hand looks identical and works - which is
+    what made this read as a calculation problem rather than a spelling
+    one. The key avoids the issue entirely by using "&"."""
+    import zipfile
+
+    rows = [dict.fromkeys(cols.RATES_ROW_FIELDS)]
+    data = build_side_by_side_workbook([("RATES", rows, rows)])
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        sheet = archive.read("xl/worksheets/sheet2.xml").decode()
+
+    assert "_xlfn.XLOOKUP(" in sheet
+    assert "TEXTJOIN" not in sheet
+    # no bare XLOOKUP anywhere once the prefixed ones are removed
+    assert "XLOOKUP" not in sheet.replace("_xlfn.XLOOKUP", "")
