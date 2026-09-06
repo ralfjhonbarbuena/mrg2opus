@@ -178,7 +178,7 @@ def _compare_block_sheet(sheet_type, suffix, sheet_name, generated, ref_wb, fiel
         return {
             "sheet_type": sheet_type, "sub_lane": sub_lane, "sheet_name": sheet_name,
             "found_in_reference": False, "matched": None,
-            "routes_matched": None, "substance_ok": None,
+            "routes_matched": 0, "substance_ok": 0,
             "missing": [], "intentionally_absent": [],
             "extra": [{"contents": k} for k in extra_keys],
             "field_mismatches": [], "substance_mismatches": [], "presentation_mismatches": [],
@@ -196,10 +196,14 @@ def _compare_block_sheet(sheet_type, suffix, sheet_name, generated, ref_wb, fiel
         key=lambda d: (d["key"], d["child_index"], d["field"]),
     )
     substance, presentation = split_mismatches_by_tier(mismatches, presentation_fields)
+    # Blocks, not rows - but counted the same way, so one column reads
+    # across every sheet type.
+    blocks_matched = len(reconstruct_blocks(generated)) - len(result.extra_blocks)
     return {
         "sheet_type": sheet_type, "sub_lane": sub_lane, "sheet_name": sheet_name,
         "found_in_reference": True, "matched": None,
-        "routes_matched": None, "substance_ok": None,
+        "routes_matched": blocks_matched,
+        "substance_ok": blocks_matched - len({m["key"] for m in substance}),
         "missing": [{"contents": k} for k in result.missing_blocks],
         "intentionally_absent": [],
         "extra": [{"contents": k} for k in result.extra_blocks],
@@ -237,7 +241,7 @@ def _skipped_row_keys(parser, workbook, profile) -> frozenset[tuple]:
 def _empty_result(sheet_type, sub_lane, sheet_name, **over):
     base = {
         "sheet_type": sheet_type, "sub_lane": sub_lane, "sheet_name": sheet_name,
-        "found_in_reference": True, "matched": None, "routes_matched": None, "substance_ok": None,
+        "found_in_reference": True, "matched": None, "routes_matched": 0, "substance_ok": 0,
         "missing": [], "intentionally_absent": [], "extra": [],
         "field_mismatches": [], "substance_mismatches": [], "presentation_mismatches": [],
     }
@@ -274,9 +278,11 @@ def _compare_route_note_sheet(suffix, sheet_name, generated, ref_wb) -> dict | N
         for (c, lane) in sorted(set(ours) & set(theirs))
         if ours[(c, lane)] != theirs[(c, lane)]
     ]
+    note_types_matched = len(set(ours) & set(theirs))
     return _empty_result(
         "ROUTE NOTE", sub_lane, sheet_name,
-        matched=len(set(ours) & set(theirs)) - len(differing),
+        routes_matched=note_types_matched,
+        substance_ok=note_types_matched - len(differing),
         missing=missing, extra=extra,
         field_mismatches=differing, substance_mismatches=differing,
     )
@@ -305,11 +311,11 @@ def _compare_vertical_rates_sheet(suffix, sheet_name, generated, ref_wb) -> dict
         {"key": key, "field": "rates", "generated": str(ours), "reference": str(theirs)}
         for key, ours, theirs in differing
     ]
-    ours_blocks = reconstruct_vertical_blocks(rows)
-    matched_blocks = len(ours_blocks) - len(extra) - len(differing)
+    blocks_matched = len(reconstruct_vertical_blocks(rows)) - len(extra)
     return _empty_result(
         "VERTICAL RATES", sub_lane, sheet_name,
-        matched=matched_blocks,
+        routes_matched=blocks_matched,
+        substance_ok=blocks_matched - len(differing),
         missing=[{"Row": str(k)} for k in missing],
         extra=[{"Row": str(k)} for k in extra],
         field_mismatches=mismatches, substance_mismatches=mismatches,
@@ -334,8 +340,11 @@ def _compare_freetime_sheet(suffix, sheet_name, generated, ref_wb) -> dict | Non
         {"key": m[0], "field": m[1], "generated": m[2], "reference": m[3]}
         for m in result.field_mismatches
     ]
+    rows_matched = len({freetime_row_key(r) for r in rows} & {freetime_row_key(r) for r in expected})
     return _empty_result(
-        "FREETIME", sub_lane, sheet_name, matched=result.matched,
+        "FREETIME", sub_lane, sheet_name,
+        routes_matched=rows_matched,
+        substance_ok=rows_matched - len({m["key"] for m in mismatches}),
         missing=[{"Row": str(k)} for k in sorted(result.missing, key=str)],
         extra=[{"Row": str(k)} for k in sorted(result.extra, key=str)],
         field_mismatches=mismatches, substance_mismatches=mismatches,
@@ -556,6 +565,41 @@ def _render_detail_table(label: str, rows: list[dict], key: str) -> None:
         st.caption(f"Showing {_DETAIL_ROW_LIMIT} of {len(flat)} on screen - the CSV has all of them.")
 
 
+def _verdict(r: dict) -> str:
+    """The short answer, so the table can be read without knowing how any
+    of this works."""
+    if not r["found_in_reference"]:
+        return "not in reference"
+    if len(r["substance_mismatches"]) or len(r["missing"]) or len(r["extra"]):
+        return "CHECK"
+    return "OK"
+
+
+def _summary_row(r: dict) -> dict:
+    """One row of the summary.
+
+    There used to be a "Matched" column here counting rows with NO
+    difference at all - across every column, sequence numbers included,
+    which a reference practically never reproduces. It read 0 on sheets
+    where nothing whatsoever was wrong, and it was the most prominent
+    number in the table. Replaced by the pair that actually answers the
+    question: how many rows line up, and how many of those agree on
+    substance.
+    """
+    matched = r["routes_matched"]
+    return {
+        "Sheet": r["sheet_type"],
+        "Sub-lane": r["sub_lane"],
+        "Verdict": _verdict(r),
+        "Matched": matched,
+        "Agree on substance": r["substance_ok"],
+        "Substance": len(r["substance_mismatches"]),
+        "Unaccounted": len(r["missing"]) + len(r["extra"]),
+        "Not filed on purpose": len(r["intentionally_absent"]),
+        "Presentation": len(r["presentation_mismatches"]),
+    }
+
+
 def _render_results(results: list[dict], explained_overrides: dict[str, str],
                     duplicate_filings: list[dict] | None = None,
                     side_by_side: list[tuple] | None = None) -> None:
@@ -625,29 +669,12 @@ def _render_results(results: list[dict], explained_overrides: dict[str, str],
         )
 
     st.markdown("#### Comparison summary")
-    st.dataframe(
-        [
-            {
-                "Sheet": r["sheet_type"],
-                "Sub-lane": r["sub_lane"],
-                "In reference?": "Yes" if r["found_in_reference"] else "No - sheet not found",
-                # None, not "-": the note sheets have no row-level matched
-                # count, and mixing a placeholder string into a column of
-                # integers is what Arrow refuses to type - the same fault
-                # the detail grids had. A blank cell reads the same and
-                # keeps the column sortable as a number.
-                "Matched": r["matched"],
-                "Missing": len(r["missing"]),
-                "Not filed on purpose": len(r["intentionally_absent"]),
-                "Extra": len(r["extra"]),
-                "Substance": len(r["substance_mismatches"]),
-                "Presentation": len(r["presentation_mismatches"]),
-            }
-            for r in results
-        ],
-        hide_index=True,
-        width="stretch",
+    st.caption(
+        "One row per sheet. **Verdict** is the short answer; read **Substance** and "
+        "**Unaccounted** if it says CHECK. Presentation differences are expected whenever "
+        "you have customized anything, and never mean the filing is wrong."
     )
+    st.dataframe([_summary_row(r) for r in results], hide_index=True, width="stretch")
 
     st.markdown("#### Details")
     for r in results:

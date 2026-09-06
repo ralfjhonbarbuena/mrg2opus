@@ -4,7 +4,7 @@ import openpyxl
 
 from mrg2opus.schema import opus_columns as cols
 from mrg2opus.schema.opus_rows import OpusRowSet, RatesPortPortRow, RatesRow
-from mrg2opus.ui.compare_page import _run_comparison
+from mrg2opus.ui.compare_page import _run_comparison, _summary_row
 
 
 def _rates_row(**overrides) -> RatesRow:
@@ -83,3 +83,48 @@ def test_run_comparison_both_mode_includes_grouped_and_exploded():
     results, _duplicates, _pairs = _run_comparison(row_sets, ref_wb, "Both", "SAF")
     sheet_types = {r["sheet_type"] for r in results}
     assert sheet_types == {"RATES", "RATES PORT-PORT"}
+
+
+# --- the summary row --------------------------------------------------------
+# A "Matched" column used to count rows with NO difference at all - across
+# every column, sequence numbers included, which a reference practically
+# never reproduces. It read 0 on sheets where nothing was wrong.
+
+def _result(**over):
+    base = {
+        "sheet_type": "RATES", "sub_lane": "(default)", "sheet_name": "RATES",
+        "found_in_reference": True, "matched": 0, "routes_matched": 7208, "substance_ok": 7208,
+        "missing": [], "intentionally_absent": [], "extra": [],
+        "field_mismatches": [], "substance_mismatches": [], "presentation_mismatches": [],
+    }
+    base.update(over)
+    return base
+
+
+def test_a_sheet_with_no_real_difference_reads_OK_however_much_presentation_differs():
+    row = _summary_row(_result(presentation_mismatches=[{"x": 1}] * 1952))
+    assert row["Verdict"] == "OK"
+    assert row["Matched"] == 7208 and row["Agree on substance"] == 7208
+
+
+def test_a_substance_difference_reads_CHECK():
+    assert _summary_row(_result(substance_mismatches=[{"key": ("a",)}]))["Verdict"] == "CHECK"
+
+
+def test_an_unaccounted_row_reads_CHECK():
+    assert _summary_row(_result(missing=[{"key": ("a",)}]))["Verdict"] == "CHECK"
+    assert _summary_row(_result(extra=[{"key": ("a",)}]))["Verdict"] == "CHECK"
+
+
+def test_a_missing_sheet_says_so_rather_than_CHECK():
+    assert _summary_row(_result(found_in_reference=False))["Verdict"] == "not in reference"
+
+
+def test_the_counts_stay_whole_numbers():
+    """None in a count column makes pandas widen it to float and print
+    7208.0 and NaN."""
+    import pandas as pd
+
+    df = pd.DataFrame([_summary_row(_result()), _summary_row(_result(found_in_reference=False, routes_matched=0, substance_ok=0))])
+    for column in ("Matched", "Agree on substance", "Substance", "Unaccounted", "Presentation"):
+        assert str(df[column].dtype) == "int64", column
