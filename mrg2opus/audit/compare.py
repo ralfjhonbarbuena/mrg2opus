@@ -150,6 +150,109 @@ SPECIAL_NOTE_IGNORE_FIELDS_BY_LANE = {
 }
 
 
+# --- Field tiers -------------------------------------------------------------
+# A flat list of "field mismatches" treats a wrong rate and a renamed
+# commodity code as the same event, and the rename wins on volume: change
+# one code and every row in that group reports a mismatch, burying the
+# three rates that are actually wrong. So each compared field is placed in
+# one of three tiers and reported separately.
+#
+#   IDENTITY     - what makes a row THIS row. Already the diff key
+#                  (rates_row_key / arbs_row_key), so it never appears as a
+#                  mismatch: a difference here makes two different rows.
+#   PRESENTATION - what the filer chooses. Different because the user said
+#                  so, or because the number is assigned by whoever writes
+#                  the file rather than derived from the source.
+#   SUBSTANCE    - everything else: the rates, currencies, terms,
+#                  transmodes and port names. A difference here is a bug.
+#
+# Substance is deliberately the DEFAULT (anything not named below), so a
+# newly added column is treated as load-bearing until someone decides
+# otherwise - the safe direction to be wrong in.
+RATES_PRESENTATION_FIELDS = frozenset({
+    "type",                           # defaults to "C"; several lanes file it blank
+    "cmdt_seq", "route_seq",          # generated numbering, user-overridable
+    "commodity_group_code",           # a placeholder until the user sets it
+    "commodity_group_description",
+    "commodity_note",                 # copied from the group's own note text
+})
+
+NOTE_PRESENTATION_FIELDS = frozenset({
+    "header_seq", "note_seq",         # assigned by whoever writes the file
+})
+
+# MappingProfile field -> the output column it changes. Used to explain a
+# presentation difference in terms of the setting that caused it, instead
+# of leaving the user to guess - and to do it per profile rather than from
+# a hardcoded per-lane table, which only ever covered 5 of the 17 lanes.
+#
+# commodity_group_order is deliberately absent: it changes the ORDER rows
+# are written in, and the diff is keyed rather than positional, so it
+# cannot produce a difference.
+OVERRIDE_TO_FIELD = {
+    "commodity_code_overrides": "commodity_group_code",
+    "commodity_description_overrides": "commodity_group_description",
+    "commodity_sequence_overrides": "cmdt_seq",
+}
+
+
+def explain_profile_overrides(profile) -> dict[str, str]:
+    """{output column: a sentence naming the setting that will make it
+    differ}, for the overrides actually set on this profile.
+
+    Empty for a default profile, so an unconfigured comparison reports
+    every difference as a real one.
+    """
+    explained: dict[str, str] = {}
+    for attr, field_name in OVERRIDE_TO_FIELD.items():
+        overrides = getattr(profile, attr, None) or {}
+        if not overrides:
+            continue
+        first_key = next(iter(overrides))
+        example = f"{first_key!r} → {overrides[first_key]!r}"
+        more = f", and {len(overrides) - 1} more" if len(overrides) > 1 else ""
+        explained[field_name] = f"you set {attr.replace('_', ' ')}: {example}{more}"
+    return explained
+
+
+def profile_without_row_skips(profile):
+    """The same profile with the two settings that REMOVE rows turned off.
+
+    Skip Filing and Skip DG don't change a value, they delete rows, so they
+    surface as "missing (in reference but not generated)" - identical to
+    the parser having failed to produce them. Re-parsing with them off says
+    exactly which rows the user chose to drop, so the two can be told
+    apart. Everything else on the profile is left alone: the point is to
+    isolate the skips, not to compare against a default parse.
+    """
+    return profile.model_copy(update={"skip_commodity_filing": {}, "skip_dg_generation": {}})
+
+
+def profile_skips_rows(profile) -> bool:
+    """Whether any group is ACTUALLY skipped.
+
+    The flags are stored per group and can be present but False, so this
+    checks the values rather than the dicts - a non-empty dict of all-False
+    flags is still truthy, which would cost a needless second parse.
+    """
+    return any(
+        skip
+        for attr in ("skip_commodity_filing", "skip_dg_generation")
+        for skip in (getattr(profile, attr, None) or {}).values()
+    )
+
+
+def split_mismatches_by_tier(
+    field_mismatches: list[dict], presentation_fields: frozenset[str]
+) -> tuple[list[dict], list[dict]]:
+    """(substance, presentation) - the two lists the UI reports separately."""
+    substance, presentation = [], []
+    for mismatch in field_mismatches:
+        target = presentation if mismatch["field"] in presentation_fields else substance
+        target.append(mismatch)
+    return substance, presentation
+
+
 @dataclass
 class KeyedDiffResult:
     matched: int

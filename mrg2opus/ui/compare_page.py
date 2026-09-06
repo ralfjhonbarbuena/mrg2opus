@@ -18,18 +18,24 @@ from openpyxl.workbook import Workbook
 
 from mrg2opus.audit.compare import (
     CMDT_NOTE_IGNORE_FIELDS_BY_LANE,
+    NOTE_PRESENTATION_FIELDS,
     RATES_IGNORE_FIELDS_BY_LANE,
     RATES_PORT_PORT_IGNORE_FIELDS_BY_LANE,
+    RATES_PRESENTATION_FIELDS,
     SPECIAL_NOTE_IGNORE_FIELDS_BY_LANE,
     arbs_row_key,
     diff_by_key,
     diff_cmdt_blocks,
+    explain_profile_overrides,
+    profile_skips_rows,
+    profile_without_row_skips,
     rates_row_key,
     read_arbs_sheet,
     read_cmdt_note_sheet,
     read_rates_sheet,
     read_special_note_sheet,
     reconstruct_blocks,
+    split_mismatches_by_tier,
 )
 from mrg2opus.excel_io.merge import DuplicateSheetError
 from mrg2opus.parsers.registry import ClassificationResult, get_profile
@@ -38,6 +44,7 @@ from mrg2opus.schema import opus_columns as cols
 from mrg2opus.ui.errors import show_error
 from mrg2opus.ui.mrg_upload import fingerprint_uploads, load_and_classify
 from mrg2opus.ui.parsing import run_parser
+from mrg2opus.ui.state import get_state as get_wizard_state
 
 RATES_MODE_OPTIONS = ["Grouped (RATES)", "Exploded (RATES PORT-PORT)", "Both"]
 
@@ -51,14 +58,22 @@ class CompareState:
     reference_workbook: Workbook | None = None
     rates_mode: str = "Both"
     apply_known_gaps: bool = True
+    # Whether to parse with the settings configured in Convert, or with a
+    # default profile. Compare used to be hardwired to defaults, so it
+    # silently answered "what does the tool produce unaided?" rather than
+    # "is the file I am about to upload right?".
+    use_wizard_profile: bool = True
     row_sets: dict[str, Any] | None = None
     compare_results: list[dict[str, Any]] | None = None
-    # (lane_id, rates_mode, apply_known_gaps) at the moment compare_results
+    # Set when the comparison ran against a customized profile: the output
+    # columns that will differ BECAUSE of a setting, and why.
+    explained_overrides: dict[str, str] = field(default_factory=dict)
+    # (lane_id, rates_mode, apply_known_gaps, use_wizard_profile) at the moment compare_results
     # was computed - lets render() detect when the visible results no
     # longer match the current control settings, instead of silently
     # showing a stale comparison after the user changes lane/mode/toggle
     # without re-clicking Run Comparison.
-    results_computed_for: tuple[str | None, str, bool] | None = None
+    results_computed_for: tuple | None = None
 
 
 def _get_state() -> CompareState:
@@ -67,7 +82,8 @@ def _get_state() -> CompareState:
     return st.session_state.compare
 
 
-def _compare_keyed_sheet(sheet_type, suffix, sheet_name, generated, ref_wb, key_fn, fields, reader, ignore_fields=frozenset()) -> dict | None:
+def _compare_keyed_sheet(sheet_type, suffix, sheet_name, generated, ref_wb, key_fn, fields, reader,
+                         ignore_fields=frozenset(), presentation_fields=frozenset(), skipped_keys=frozenset()) -> dict | None:
     sub_lane = suffix or "(default)"
     try:
         expected = reader(ref_wb, sheet_name)
@@ -77,28 +93,55 @@ def _compare_keyed_sheet(sheet_type, suffix, sheet_name, generated, ref_wb, key_
         return {
             "sheet_type": sheet_type, "sub_lane": sub_lane, "sheet_name": sheet_name,
             "found_in_reference": False, "matched": 0,
-            "missing": [], "extra": sorted(({"key": key_fn(r)} for r in generated), key=lambda d: str(d["key"])),
-            "field_mismatches": [],
+            "routes_matched": 0, "substance_ok": 0,
+            "missing": [], "intentionally_absent": [],
+            "extra": sorted(({"key": key_fn(r)} for r in generated), key=lambda d: str(d["key"])),
+            "field_mismatches": [], "substance_mismatches": [], "presentation_mismatches": [],
         }
     if not generated and not expected:
         return None
     result = diff_by_key(generated, expected, key_fn=key_fn, fields=fields, ignore_fields=ignore_fields)
+    mismatches = sorted(
+        (
+            {"key": m[0], "field": m[1], "generated": m[2], "reference": m[3]}
+            for m in result.field_mismatches
+        ),
+        key=lambda d: (str(d["key"]), d["field"]),
+    )
+    substance, presentation = split_mismatches_by_tier(mismatches, presentation_fields)
+
+    # `matched` counts rows with NO difference at all, so renaming one
+    # commodity code drops it through the floor even though every rate is
+    # still right. These two say what people actually came to find out:
+    # how many routes line up, and how many of those are correct on
+    # substance (a row differing only on presentation still counts).
+    common_keys = {key_fn(r) for r in generated} & {key_fn(r) for r in expected}
+    routes_matched = len(common_keys)
+    substance_ok = routes_matched - len({m["key"] for m in substance})
+
+    # Rows the user chose not to file read as "missing" otherwise, which is
+    # exactly how a parser that failed to produce them would read.
+    intentionally_absent = [
+        {"key": k} for k in sorted(result.missing, key=str) if k in skipped_keys
+    ]
+    unexplained_missing = [
+        {"key": k} for k in sorted(result.missing, key=str) if k not in skipped_keys
+    ]
     return {
         "sheet_type": sheet_type, "sub_lane": sub_lane, "sheet_name": sheet_name,
         "found_in_reference": True, "matched": result.matched,
-        "missing": sorted(({"key": k} for k in result.missing), key=lambda d: str(d["key"])),
+        "routes_matched": routes_matched, "substance_ok": substance_ok,
+        "missing": unexplained_missing,
+        "intentionally_absent": intentionally_absent,
         "extra": sorted(({"key": k} for k in result.extra), key=lambda d: str(d["key"])),
-        "field_mismatches": sorted(
-            (
-                {"key": m[0], "field": m[1], "generated": m[2], "reference": m[3]}
-                for m in result.field_mismatches
-            ),
-            key=lambda d: (str(d["key"]), d["field"]),
-        ),
+        "field_mismatches": mismatches,
+        "substance_mismatches": substance,
+        "presentation_mismatches": presentation,
     }
 
 
-def _compare_block_sheet(sheet_type, suffix, sheet_name, generated, ref_wb, fields, reader, ignore_fields=frozenset()) -> dict | None:
+def _compare_block_sheet(sheet_type, suffix, sheet_name, generated, ref_wb, fields, reader,
+                         ignore_fields=frozenset(), presentation_fields=frozenset()) -> dict | None:
     sub_lane = suffix or "(default)"
     try:
         expected = reader(ref_wb, sheet_name)
@@ -109,30 +152,69 @@ def _compare_block_sheet(sheet_type, suffix, sheet_name, generated, ref_wb, fiel
         return {
             "sheet_type": sheet_type, "sub_lane": sub_lane, "sheet_name": sheet_name,
             "found_in_reference": False, "matched": None,
-            "missing": [], "extra": [{"contents": k} for k in extra_keys],
-            "field_mismatches": [],
+            "routes_matched": None, "substance_ok": None,
+            "missing": [], "intentionally_absent": [],
+            "extra": [{"contents": k} for k in extra_keys],
+            "field_mismatches": [], "substance_mismatches": [], "presentation_mismatches": [],
         }
     gen_has_blocks = bool(reconstruct_blocks(generated))
     exp_has_blocks = bool(reconstruct_blocks(expected))
     if not gen_has_blocks and not exp_has_blocks:
         return None
     result = diff_cmdt_blocks(generated, expected, fields, ignore_fields=ignore_fields)
+    mismatches = sorted(
+        (
+            {"key": m[0], "child_index": m[1], "field": m[2], "generated": m[3], "reference": m[4]}
+            for m in result.field_mismatches
+        ),
+        key=lambda d: (d["key"], d["child_index"], d["field"]),
+    )
+    substance, presentation = split_mismatches_by_tier(mismatches, presentation_fields)
     return {
         "sheet_type": sheet_type, "sub_lane": sub_lane, "sheet_name": sheet_name,
         "found_in_reference": True, "matched": None,
+        "routes_matched": None, "substance_ok": None,
         "missing": [{"contents": k} for k in result.missing_blocks],
+        "intentionally_absent": [],
         "extra": [{"contents": k} for k in result.extra_blocks],
-        "field_mismatches": sorted(
-            (
-                {"key": m[0], "child_index": m[1], "field": m[2], "generated": m[3], "reference": m[4]}
-                for m in result.field_mismatches
-            ),
-            key=lambda d: (d["key"], d["child_index"], d["field"]),
-        ),
+        "field_mismatches": mismatches,
+        "substance_mismatches": substance,
+        "presentation_mismatches": presentation,
     }
 
 
-def _run_comparison(row_sets: dict, ref_wb: Workbook, rates_mode: str, lane_id: str, apply_known_gaps: bool = True) -> list[dict]:
+def _skipped_row_keys(parser, workbook, profile) -> frozenset[tuple]:
+    """The row keys the user's own Skip Filing / Skip DG settings removed.
+
+    Worked out by re-parsing with just those two settings off and taking
+    the difference, rather than by guessing which reference rows belong to
+    a skipped group - the reference files a group under its own name, which
+    need not be the name the profile keys on. Costs a second parse, so it
+    only runs when a skip is actually set.
+    """
+    if not profile_skips_rows(profile):
+        return frozenset()
+
+    def keys_of(row_sets: dict) -> set[tuple]:
+        keys: set[tuple] = set()
+        for row_set in row_sets.values():
+            keys |= {rates_row_key(r.model_dump()) for r in row_set.rates}
+            keys |= {rates_row_key(r.model_dump()) for r in row_set.rates_port_port}
+        return keys
+
+    kept = keys_of(run_parser(parser, workbook, profile))
+    everything = keys_of(run_parser(parser, workbook, profile_without_row_skips(profile)))
+    return frozenset(everything - kept)
+
+
+def _run_comparison(
+    row_sets: dict,
+    ref_wb: Workbook,
+    rates_mode: str,
+    lane_id: str,
+    apply_known_gaps: bool = True,
+    skipped_keys: frozenset = frozenset(),
+) -> list[dict]:
     want_grouped = rates_mode in ("Grouped (RATES)", "Both")
     want_exploded = rates_mode in ("Exploded (RATES PORT-PORT)", "Both")
 
@@ -149,6 +231,7 @@ def _run_comparison(row_sets: dict, ref_wb: Workbook, rates_mode: str, lane_id: 
                 "RATES", suffix, f"RATES{tag}",
                 [x.model_dump() for x in row_set.rates], ref_wb,
                 rates_row_key, cols.RATES_ROW_FIELDS, read_rates_sheet, ignore_fields=rates_ignore,
+                presentation_fields=RATES_PRESENTATION_FIELDS, skipped_keys=skipped_keys,
             )
             if r is not None:
                 results.append(r)
@@ -157,6 +240,7 @@ def _run_comparison(row_sets: dict, ref_wb: Workbook, rates_mode: str, lane_id: 
                 "RATES PORT-PORT", suffix, f"RATES{tag} PORT-PORT",
                 [x.model_dump() for x in row_set.rates_port_port], ref_wb,
                 rates_row_key, cols.RATES_ROW_FIELDS, read_rates_sheet, ignore_fields=port_port_ignore,
+                presentation_fields=RATES_PRESENTATION_FIELDS, skipped_keys=skipped_keys,
             )
             if r is not None:
                 results.append(r)
@@ -171,6 +255,7 @@ def _run_comparison(row_sets: dict, ref_wb: Workbook, rates_mode: str, lane_id: 
             "CMDT NOTE", suffix, f"CMDT NOTE{tag}",
             [x.model_dump() for x in row_set.cmdt_notes], ref_wb,
             cols.CMDT_NOTE_ROW_FIELDS, read_cmdt_note_sheet, ignore_fields=cmdt_ignore,
+            presentation_fields=NOTE_PRESENTATION_FIELDS,
         )
         if r is not None:
             results.append(r)
@@ -178,6 +263,7 @@ def _run_comparison(row_sets: dict, ref_wb: Workbook, rates_mode: str, lane_id: 
             "SPECIAL NOTE", suffix, f"SPECIAL NOTE{tag}",
             [x.model_dump() for x in row_set.special_notes], ref_wb,
             cols.SPECIAL_NOTE_ROW_FIELDS, read_special_note_sheet, ignore_fields=special_ignore,
+            presentation_fields=NOTE_PRESENTATION_FIELDS,
         )
         if r is not None:
             results.append(r)
@@ -206,10 +292,49 @@ def _render_detail_table(label: str, rows: list[dict], key: str) -> None:
         )
 
 
-def _render_results(results: list[dict]) -> None:
+def _render_results(results: list[dict], explained_overrides: dict[str, str]) -> None:
     if not results:
         st.info("Nothing to compare - the parsed MRG produced no rows for the sheet type(s) selected.")
         return
+
+    # The headline answers the question people actually bring here: are the
+    # routes and the rates right? A renamed commodity code produces one
+    # difference per row, so left in the same column as a wrong rate it
+    # buries it - the two are counted separately.
+    substance = sum(len(r["substance_mismatches"]) for r in results)
+    presentation = sum(len(r["presentation_mismatches"]) for r in results)
+    unexplained_missing = sum(len(r["missing"]) for r in results)
+    extra = sum(len(r["extra"]) for r in results)
+    intentional = sum(len(r["intentionally_absent"]) for r in results)
+
+    routes = sum(r["routes_matched"] or 0 for r in results)
+    substance_ok = sum(r["substance_ok"] or 0 for r in results)
+
+    cols_ = st.columns(5)
+    cols_[0].metric("Routes matched", routes, help="Rows present in both, matched on origin, destination, cargo type and routing.")
+    cols_[1].metric(
+        "…correct on substance", substance_ok,
+        delta=None if substance_ok == routes else -(routes - substance_ok),
+        help="Of the matched routes, how many agree on every rate, currency, term and port name. "
+             "A row differing only on a field you chose still counts here.",
+    )
+    cols_[2].metric("Rows unaccounted for", unexplained_missing + extra, help="Missing from your output or extra in it, with no setting explaining either.")
+    cols_[3].metric("Presentation differences", presentation, help="Commodity code/description, sequence numbers, note text - what you choose or the writer assigns.")
+    cols_[4].metric("Not filed on purpose", intentional, help="Rows your Skip Filing / Skip DG settings removed.")
+
+    if substance == 0 and unexplained_missing == 0 and extra == 0:
+        st.success(
+            "Every route matched and every rate agrees. "
+            + (f"The {presentation} remaining differences are all in fields you control or the writer assigns."
+               if presentation else "No differences at all.")
+        )
+
+    if explained_overrides:
+        st.info(
+            "**Differences expected from your settings** — these columns will not match the reference, "
+            "because you changed them:\n\n"
+            + "\n".join(f"- `{field_name}` — {why}" for field_name, why in sorted(explained_overrides.items()))
+        )
 
     st.markdown("#### Comparison summary")
     st.dataframe(
@@ -220,8 +345,10 @@ def _render_results(results: list[dict]) -> None:
                 "In reference?": "Yes" if r["found_in_reference"] else "No - sheet not found",
                 "Matched": r["matched"] if r["matched"] is not None else "-",
                 "Missing": len(r["missing"]),
+                "Not filed on purpose": len(r["intentionally_absent"]),
                 "Extra": len(r["extra"]),
-                "Field mismatches": len(r["field_mismatches"]),
+                "Substance": len(r["substance_mismatches"]),
+                "Presentation": len(r["presentation_mismatches"]),
             }
             for r in results
         ],
@@ -239,13 +366,32 @@ def _render_results(results: list[dict]) -> None:
                     "every generated row is listed as extra."
                 )
             row_key = f"{r['sheet_type']}_{r['sub_lane']}".replace(" ", "_")
+            # Substance first: it is the only bucket that means something
+            # is wrong, so it should not sit below hundreds of expected
+            # presentation rows.
+            if r["substance_mismatches"]:
+                _render_detail_table(
+                    "Substance differences — rates, currencies, terms, port names",
+                    r["substance_mismatches"], f"{row_key}_substance",
+                )
             if r["missing"]:
                 _render_detail_table("Missing (in reference but not generated)", r["missing"], f"{row_key}_missing")
             if r["extra"]:
                 _render_detail_table("Extra (generated but not in reference)", r["extra"], f"{row_key}_extra")
-            if r["field_mismatches"]:
-                _render_detail_table("Field mismatches", r["field_mismatches"], f"{row_key}_field_mismatches")
-            if r["found_in_reference"] and not r["missing"] and not r["extra"] and not r["field_mismatches"]:
+            if r["intentionally_absent"]:
+                _render_detail_table(
+                    "Not filed on purpose (your Skip Filing / Skip DG settings)",
+                    r["intentionally_absent"], f"{row_key}_intentional",
+                )
+            if r["presentation_mismatches"]:
+                _render_detail_table(
+                    "Presentation differences — fields you choose, or the writer assigns",
+                    r["presentation_mismatches"], f"{row_key}_presentation",
+                )
+            if (
+                r["found_in_reference"]
+                and not r["missing"] and not r["extra"] and not r["field_mismatches"]
+            ):
                 st.success("No differences found.")
 
 
@@ -334,20 +480,46 @@ def render() -> None:
              "(e.g. `type`, externally-assigned sequence numbers) - see MIGRATION_NOTES.md.",
     )
 
-    current_settings = (state.selected_lane_id, state.rates_mode, state.apply_known_gaps)
+    # Which settings the MRG is parsed with. Compare used to be hardwired
+    # to a default profile, so it answered "what does the tool produce
+    # unaided?" rather than "is the file I am about to upload right?" -
+    # and anything customized in Convert was invisible to it.
+    wizard_profile = get_wizard_state().profile
+    customized = bool(explain_profile_overrides(wizard_profile)) or profile_skips_rows(wizard_profile)
+    state.use_wizard_profile = st.checkbox(
+        "Use the settings from Convert",
+        value=state.use_wizard_profile,
+        help=(
+            "Compare the output you actually configured — your commodity codes, descriptions, "
+            "sequence numbers and any groups you chose not to file. Uncheck to compare the tool's "
+            "unaided output against the reference instead."
+        ),
+    )
+    if state.use_wizard_profile and not customized:
+        st.caption("Nothing is customized in Convert yet, so this is the same as the tool's default output.")
+
+    profile = wizard_profile if state.use_wizard_profile else MappingProfile()
+    current_settings = (
+        state.selected_lane_id, state.rates_mode, state.apply_known_gaps, state.use_wizard_profile,
+    )
 
     if st.button("Run Comparison", type="primary"):
         parser_cls = get_profile(state.selected_lane_id).parser_cls
         parser = parser_cls()
         with st.spinner("Parsing MRG..."):
-            state.row_sets = run_parser(parser, state.workbook, MappingProfile())
-        state.compare_results = _run_comparison(state.row_sets, state.reference_workbook, state.rates_mode, state.selected_lane_id, state.apply_known_gaps)
+            state.row_sets = run_parser(parser, state.workbook, profile)
+            skipped_keys = _skipped_row_keys(parser, state.workbook, profile)
+        state.explained_overrides = explain_profile_overrides(profile)
+        state.compare_results = _run_comparison(
+            state.row_sets, state.reference_workbook, state.rates_mode,
+            state.selected_lane_id, state.apply_known_gaps, skipped_keys,
+        )
         state.results_computed_for = current_settings
 
     if state.compare_results is not None:
         if state.results_computed_for != current_settings:
             st.warning(
-                "⚠️ Lane, RATES mode, or the known-gaps toggle changed since this comparison ran - "
-                "click **Run Comparison** to refresh before trusting these results."
+                "⚠️ Lane, RATES mode, the known-gaps toggle or the profile choice changed since this "
+                "comparison ran - click **Run Comparison** to refresh before trusting these results."
             )
-        _render_results(state.compare_results)
+        _render_results(state.compare_results, state.explained_overrides)

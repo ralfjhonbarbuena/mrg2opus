@@ -3,13 +3,19 @@ from __future__ import annotations
 import openpyxl
 
 from mrg2opus.audit.compare import (
+    RATES_PRESENTATION_FIELDS,
     arbs_row_key,
     diff_by_key,
+    explain_profile_overrides,
     find_sheet,
+    profile_skips_rows,
+    profile_without_row_skips,
     rates_row_key,
     read_arbs_sheet,
     read_rates_sheet,
+    split_mismatches_by_tier,
 )
+from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema import opus_columns as cols
 
 
@@ -159,3 +165,80 @@ def test_diff_cmdt_blocks_field_mismatch_within_matched_block():
     assert len(result.field_mismatches) == 1
     key, idx, field_name, gv, ev = result.field_mismatches[0]
     assert (key, idx, field_name, gv, ev) == ("Block A", 0, "amount", 100, 200)
+
+
+# --- field tiers ------------------------------------------------------------
+# A renamed commodity code produces one mismatch per row, so reported in the
+# same bucket as a wrong rate it buries it. See compare.py's tier comment.
+
+def test_substance_and_presentation_are_reported_separately():
+    mismatches = [
+        {"key": ("A",), "field": "rate_20", "generated": 100, "reference": 120},
+        {"key": ("A",), "field": "commodity_group_code", "generated": "LWE01", "reference": "G0001"},
+        {"key": ("B",), "field": "commodity_group_code", "generated": "LWE01", "reference": "G0001"},
+    ]
+
+    substance, presentation = split_mismatches_by_tier(mismatches, RATES_PRESENTATION_FIELDS)
+
+    assert [m["field"] for m in substance] == ["rate_20"]
+    assert [m["field"] for m in presentation] == ["commodity_group_code", "commodity_group_code"]
+
+
+def test_unlisted_fields_count_as_substance():
+    """Substance is the default, so a newly added column is treated as
+    load-bearing until someone decides otherwise."""
+    substance, presentation = split_mismatches_by_tier(
+        [{"key": ("A",), "field": "some_new_column", "generated": 1, "reference": 2}],
+        RATES_PRESENTATION_FIELDS,
+    )
+    assert len(substance) == 1 and not presentation
+
+
+# --- explaining differences from the profile --------------------------------
+
+def test_a_default_profile_explains_nothing():
+    assert explain_profile_overrides(MappingProfile()) == {}
+
+
+def test_each_override_names_the_column_it_changes_and_an_example():
+    profile = MappingProfile(
+        commodity_code_overrides={"CSE": "LWE01", "NOR": "LWE02"},
+        commodity_sequence_overrides={"CSE": 4},
+    )
+
+    explained = explain_profile_overrides(profile)
+
+    assert set(explained) == {"commodity_group_code", "cmdt_seq"}
+    assert "'CSE' → 'LWE01'" in explained["commodity_group_code"]
+    assert "and 1 more" in explained["commodity_group_code"]
+    assert "and 1 more" not in explained["cmdt_seq"]
+
+
+def test_group_order_is_not_an_expected_difference():
+    """It changes the order rows are written in, and the diff is keyed
+    rather than positional, so it cannot produce one."""
+    assert explain_profile_overrides(MappingProfile(commodity_group_order=["A", "B"])) == {}
+
+
+# --- row-removing settings --------------------------------------------------
+
+def test_row_skips_are_detected_only_when_actually_set():
+    assert not profile_skips_rows(MappingProfile())
+    assert not profile_skips_rows(MappingProfile(skip_commodity_filing={"CSE": False}))
+    assert profile_skips_rows(MappingProfile(skip_commodity_filing={"CSE": True}))
+    assert profile_skips_rows(MappingProfile(skip_dg_generation={"CSE": True}))
+
+
+def test_disabling_skips_leaves_every_other_setting_alone():
+    profile = MappingProfile(
+        commodity_code_overrides={"CSE": "LWE01"},
+        skip_commodity_filing={"CSE": True},
+        skip_dg_generation={"NOR": True},
+        include_vertical_rates=False,
+    )
+
+    without = profile_without_row_skips(profile)
+
+    assert without.skip_commodity_filing == {} and without.skip_dg_generation == {}
+    assert without.commodity_code_overrides == {"CSE": "LWE01"}
+    assert without.include_vertical_rates is False
