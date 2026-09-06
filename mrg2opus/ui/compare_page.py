@@ -97,6 +97,8 @@ class CompareState:
     # Which of those get a DG twin - see WizardState.dg_twin_groups.
     dg_twin_groups: frozenset[str] = frozenset()
     reefer_nor_groups: frozenset[str] = frozenset()
+    # The parse's own sub-lane keys - TAD answers DG per scope.
+    scopes: list[str] = field(default_factory=list)
     # Which lane that snapshot was taken for, so switching lane re-takes it.
     groups_lane_id: str | None = None
     skip_sheets: list[str] = field(default_factory=list)
@@ -876,6 +878,7 @@ def render() -> None:
         state.default_commodity_groups = distinct_commodity_groups(base_rows)
         state.dg_twin_groups = groups_offering_dg_twins(probe)
         state.reefer_nor_groups = reefer_and_nor_groups(base_rows)
+        state.scopes = list(base_rows)
         # Same sequential G0001, G0002, ... default Convert seeds after
         # its first parse - so both screens start from the same draft and
         # a difference between them is a difference someone chose.
@@ -891,7 +894,7 @@ def render() -> None:
         )
         state.profile = render_filing_settings(
             state.profile, state.default_commodity_groups, state.dg_twin_groups,
-            state.reefer_nor_groups, selected, key_prefix="compare",
+            state.reefer_nor_groups, state.scopes, selected, key_prefix="compare",
         )
 
     state.skip_sheets = st.multiselect(

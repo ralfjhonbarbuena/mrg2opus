@@ -116,8 +116,17 @@ class MappingProfile(BaseModel):
     # default - this is an opt-IN, not an opt-out, and applies uniformly
     # across every TAD lane in one run (no per-group key: TAD's raw sheets
     # don't have the same "default_description per group" structure the
-    # other lanes key skip_dg_generation by).
+    # other lanes key skip_dg_generation by). Read it through
+    # files_tad_dg(), never directly - a scope can say otherwise.
     generate_tad_dg_duplicate: bool = False
+    # Per-scope override of the flag above, {scope: files DG}. A TAD lane
+    # is filed as one workbook per scope, and one round's own settings can
+    # differ between them - reference/2_OPUS/23's AEW and AMW filings carry
+    # their D/DG rows while the Japan ones, cut from the same source
+    # workbook that same week, carry none. That is a filing-prep choice
+    # rather than a rule about Japan, so it lives in the settings instead
+    # of being written into the parser.
+    tad_dg_by_scope: dict[str, bool] = {}
     # AEW/AMW only: an OFT 45 ("D7") rate slot the raw MRG never carries
     # directly - confirmed against ground truth as OFT 40HC + a fixed
     # add-on (reference/1_MRGs/23_TAD FILING AEW AMW's own "Surcharges"
@@ -129,3 +138,12 @@ class MappingProfile(BaseModel):
     # the raw MRG shape doesn't carry an equivalent add-on for them.
     include_tad_d7: bool = False
     tad_d7_addon: Decimal = Decimal("700")
+
+    def files_tad_dg(self, scope: str) -> bool:
+        """Does this TAD scope file its D/DG duplicate rows?
+
+        The per-scope answer where one was given, the filing-wide toggle
+        otherwise - so a profile that never mentions scopes behaves
+        exactly as it did before per-scope control existed.
+        """
+        return self.tad_dg_by_scope.get(scope, self.generate_tad_dg_duplicate)

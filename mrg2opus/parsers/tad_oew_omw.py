@@ -259,13 +259,15 @@ class TADOewOmwParser(BaseMRGParser):
                 )
             )
 
-        # Opt-in only (config.generate_tad_dg_duplicate, default off) -
+        # Opt-in only (config.files_tad_dg, default off) -
         # mirrors the team's own VBA tool's "Include Dry Dangerous" toggle
-        # (see project_tad_vba_tool_analysis memory). A duplicate shares
+        # (see project_tad_vba_tool_analysis memory), and is answered per
+        # SCOPE - one round can file it for some of its scopes and not
+        # others. A duplicate shares
         # its parent's cmdt_seq (same validity/charge-code key - only
         # cgo_type changes), so it needs no separate group bookkeeping;
         # inserted before Route Seq. numbering below so it's included.
-        if config.generate_tad_dg_duplicate:
+        if config.files_tad_dg(data.scope):
             rates.extend(
                 row.model_copy(update={"cgo_type": "DG"}) for row in list(rates) if row.prefix == "D" and row.cgo_type == "DR"
             )

@@ -240,9 +240,9 @@ class TADWmwWewParser(BaseMRGParser):
                 )
             )
 
-        # Opt-in only (config.generate_tad_dg_duplicate, default off) -
+        # Opt-in only (config.files_tad_dg, default off) -
         # see TAD-OEW-OMW's identical comment.
-        if config.generate_tad_dg_duplicate:
+        if config.files_tad_dg(data.scope):
             rates.extend(
                 row.model_copy(update={"cgo_type": "DG"}) for row in list(rates) if row.prefix == "D" and row.cgo_type == "DR"
             )

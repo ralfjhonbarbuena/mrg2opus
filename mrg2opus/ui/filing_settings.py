@@ -64,6 +64,7 @@ def render_filing_settings(
     groups: list[tuple[str, str]],
     dg_twin_groups: frozenset[str],
     reefer_nor_groups: frozenset[str],
+    scopes: list[str],
     lane_id: str | None,
     key_prefix: str,
 ) -> MappingProfile:
@@ -75,6 +76,8 @@ def render_filing_settings(
     for by default (commodity_utils.groups_offering_dg_twins), and
     `reefer_nor_groups` the reefer and NOR groups, which can be asked for
     one whether or not the lane files it (parsers.common.dg_twins).
+    `scopes` is the parse's own sub-lane keys, which TAD files as separate
+    workbooks and can answer the DG question separately.
 
     Returns a NEW profile built from what is on screen rather than
     mutating the one passed in, so the caller decides when it takes
@@ -211,38 +214,54 @@ def render_filing_settings(
         key=f"{key_prefix}_include_vertical_rates",
     )
 
-    # One DG control for EVERY lane. The underlying field and the default
-    # differ by lane family - TAD mirrors its own export tool's opt-IN
-    # "Include Dry Dangerous" setting (off by default), every other lane
-    # generates the duplicate by default and opts OUT - but the user sees
-    # the same checkbox either way, and non-TAD lanes get a per-group
-    # opt-out underneath it for finer control.
+    # DG on every lane, asked the way that lane is actually filed. TAD
+    # mirrors its own export tool's opt-IN "Include Dry Dangerous" setting
+    # (off by default) and answers it per service scope, since each scope
+    # is a separate filed workbook; every other lane generates the
+    # duplicate by default and opts out, per commodity group.
     st.markdown("#### Dangerous Goods (DG)")
     is_tad_lane = bool(lane_id and lane_id.startswith("TAD-"))
     group_descriptions = [desc for _code, desc in groups]
+    tad_dg_by_scope = dict(profile.tad_dg_by_scope)
     if is_tad_lane:
-        dg_currently_on = profile.generate_tad_dg_duplicate
+        # One answer per SERVICE SCOPE rather than one for the filing.
+        # Each scope is filed as its own workbook, and a round can differ
+        # between them: in reference/2_OPUS/23 the AEW and AMW filings
+        # carry their D/DG rows and the Japan ones, cut from the same
+        # source workbook that same week, carry none. With a single
+        # switch, reproducing that took two runs.
+        st.caption(
+            "Files a second, identical row for each base Dry (D/DR) row with CGO TYPE flipped to DG, at "
+            "the same rate - a standing filing convention, not something the raw MRG states. Off by "
+            "default for TAD filings, matching the team's own export tool. Each service scope is filed "
+            "as its own workbook, so each answers for itself."
+        )
+        scope_cols = st.columns(min(3, max(len(scopes), 1)))
+        for i, scope in enumerate(scopes):
+            with scope_cols[i % len(scope_cols)]:
+                tad_dg_by_scope[scope] = st.checkbox(
+                    scope or "This filing",
+                    value=profile.files_tad_dg(scope),
+                    key=f"{key_prefix}_tad_dg_{scope}",
+                )
+        generate_dg = any(tad_dg_by_scope.get(s, False) for s in scopes)
     else:
         # On unless every group is currently skipped.
         dg_currently_on = not (
             bool(group_descriptions)
             and all(profile.skip_dg_generation.get(d, False) for d in group_descriptions)
         )
-    generate_dg = st.checkbox(
-        "File D/DG duplicate rows",
-        value=dg_currently_on,
-        help=(
-            "Files a second, identical row for each base Dry (D/DR) row with CGO TYPE flipped to DG, at the "
-            "same rate - a standing filing convention, not something the raw MRG states. "
-            + (
-                "Off by default for TAD filings, matching the team's own export tool."
-                if is_tad_lane
-                else "On by default for this lane. Unchecking it drops DG everywhere; to drop it for only "
-                "some commodity groups, leave this checked and untick them below."
-            )
-        ),
-        key=f"{key_prefix}_generate_dg",
-    )
+        generate_dg = st.checkbox(
+            "File D/DG duplicate rows",
+            value=dg_currently_on,
+            help=(
+                "Files a second, identical row for each base Dry (D/DR) row with CGO TYPE flipped to DG, at "
+                "the same rate - a standing filing convention, not something the raw MRG states. On by "
+                "default for this lane. Unchecking it drops DG everywhere; to drop it for only some "
+                "commodity groups, leave this checked and untick them below."
+            ),
+            key=f"{key_prefix}_generate_dg",
+        )
 
     # Per group, and only for groups DG can mean something for: the ones
     # this lane files a twin for by default, plus every reefer and NOR
@@ -281,6 +300,9 @@ def render_filing_settings(
         else:
             st.caption("No commodity group in this file can carry DG rows, so there is nothing to choose here.")
 
+    # The filing-wide flag stays the fallback for a scope nobody answered
+    # for - a preset made here always answers for every scope it saw, but
+    # the CLI and an older preset can still be reading just this one.
     generate_tad_dg_duplicate = generate_dg if is_tad_lane else profile.generate_tad_dg_duplicate
     include_tad_d7 = profile.include_tad_d7
     tad_d7_addon = profile.tad_d7_addon
@@ -373,6 +395,7 @@ def render_filing_settings(
             "rfa_expiry_date": rfa_expiry_date,
             "include_vertical_rates": include_vertical_rates,
             "generate_tad_dg_duplicate": generate_tad_dg_duplicate,
+            "tad_dg_by_scope": tad_dg_by_scope,
             "include_tad_d7": include_tad_d7,
             "tad_d7_addon": tad_d7_addon,
         }

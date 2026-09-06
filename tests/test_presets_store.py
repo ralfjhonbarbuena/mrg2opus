@@ -48,3 +48,14 @@ def test_preset_name_sanitized_for_filesystem(tmp_path):
     save_preset(MappingProfile(name="Weird/Name:*?"), presets_dir=tmp_path)
 
     assert list_presets(presets_dir=tmp_path) == ["WeirdName"]
+
+
+def test_a_scope_nobody_answered_for_falls_back_to_the_filing_wide_flag():
+    """Per-scope DG is an addition, so a profile that predates it - a
+    saved preset, or one the CLI built - has to behave exactly as it did."""
+    assert MappingProfile(generate_tad_dg_duplicate=True).files_tad_dg("AEW") is True
+    assert MappingProfile().files_tad_dg("AEW") is False
+
+    mixed = MappingProfile(generate_tad_dg_duplicate=True, tad_dg_by_scope={"JAPAN AEW": False})
+    assert mixed.files_tad_dg("AEW") is True
+    assert mixed.files_tad_dg("JAPAN AEW") is False

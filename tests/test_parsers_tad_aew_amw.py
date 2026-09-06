@@ -469,3 +469,37 @@ def test_tad_aew_amw_japan_arbs_duplicates_the_copies_in_the_main_files():
     ref_jp = openpyxl.load_workbook(GROUND_TRUTH["JAPAN"], data_only=True, read_only=True)
     ref_aew = openpyxl.load_workbook(GROUND_TRUTH["AEW"], data_only=True, read_only=True)
     assert read_arbs_sheet(ref_jp, "ORIGIN ARBS AEW") == read_arbs_sheet(ref_aew, "AEW ARBS JP")
+
+
+def test_one_run_reproduces_every_scope_of_this_filing_round():
+    """The DG duplicate is answered per scope, so the whole round comes
+    out of a single parse.
+
+    This round filed it for AEW and AMW and not for the two Japan scopes
+    (see the module docstring) - a filing-prep choice, not a rule about
+    Japan, which is why it lives in the profile rather than in this
+    parser. The other tests here still run the scopes separately, since
+    each also needs its own RFA window; this one checks the DG half alone.
+    """
+    profile = MappingProfile(
+        rfa_effective_date=AEW_RFA_EFFECTIVE, rfa_expiry_date=RFA_EXPIRY,
+        include_tad_d7=True, generate_tad_dg_duplicate=True,
+        tad_dg_by_scope={"JAPAN AEW": False, "JAPAN AMW": False},
+    )
+    row_sets = TADAewAmwParser().run_multi(_load_merged_workbook(), profile)
+
+    expected = {}
+    for path, sheets in (
+        (GROUND_TRUTH["AEW"], {"AEW": "RATES"}),
+        (GROUND_TRUTH["AMW"], {"AMW": "RATES"}),
+        (GROUND_TRUTH["JAPAN"], {"JAPAN AEW": "AEW RATES", "JAPAN AMW": "AMW RATES"}),
+    ):
+        ref_wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        for scope, sheet in sheets.items():
+            expected[scope] = read_rates_sheet(ref_wb, sheet)
+        ref_wb.close()
+
+    for scope, rows in expected.items():
+        ours = row_sets[scope].rates
+        assert len(ours) == len(rows), f"{scope}: {len(ours)} rows against the filing's {len(rows)}"
+        assert {(r.prefix, r.cgo_type) for r in ours} == {(r["prefix"], r["cgo_type"]) for r in rows}, scope
