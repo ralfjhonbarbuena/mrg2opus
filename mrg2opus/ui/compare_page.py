@@ -488,6 +488,11 @@ _KEY_COLUMN_LABELS = {
 }
 
 
+def _as_text(value):
+    """None stays None; everything else becomes a string - see _flatten."""
+    return None if value is None else str(value)
+
+
 def _flatten(entries: list[dict]) -> list[dict]:
     """Spread the match key into its own named columns.
 
@@ -513,11 +518,17 @@ def _flatten(entries: list[dict]) -> list[dict]:
         if "contents" in entry:
             row["Note contents"] = entry["contents"]
         if "child_index" in entry:
-            row["Row in block"] = "parent" if entry["child_index"] == 0 else entry["child_index"]
+            row["Row in block"] = "parent" if entry["child_index"] == 0 else str(entry["child_index"])
         if "field" in entry:
+            # Stringified deliberately. One column carries values from
+            # every OPUS column at once - "G0001" from a commodity code
+            # sits beside 5800 from a rate - and Arrow, which Streamlit
+            # serialises the grid through, can't type a mixed column: it
+            # raised ArrowInvalid and dumped a traceback per render.
+            # None is left as None so a blank still reads as blank.
             row["Column"] = entry["field"]
-            row["Your draft"] = entry.get("generated")
-            row["Reference"] = entry.get("reference")
+            row["Your draft"] = _as_text(entry.get("generated"))
+            row["Reference"] = _as_text(entry.get("reference"))
         flat.append(row)
     return flat
 
