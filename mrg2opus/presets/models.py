@@ -11,6 +11,33 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+# The commodity settings a single sub-lane answers differently. A lane
+# with sub-lanes files each as its own OPUS workbook, so one commodity
+# group can legitimately be coded, named, ordered or dropped one way in
+# one scope and another way in the next - TAD AEW/AMW's two Japan scopes
+# file the same group as G0011 and G0001 in the same round.
+#
+# Keyed like every other commodity setting: by the group's DEFAULT
+# (override-free) description. Only what a scope answers differently is
+# stored; anything absent falls through to the filing-wide value, so the
+# shared settings stay the one place to change something everywhere.
+class ScopeOverrides(BaseModel):
+    commodity_code_overrides: dict[str, str] = Field(default_factory=dict)
+    commodity_description_overrides: dict[str, str] = Field(default_factory=dict)
+    commodity_sequence_overrides: dict[str, int] = Field(default_factory=dict)
+    commodity_group_order: list[str] = Field(default_factory=list)
+    skip_commodity_filing: dict[str, bool] = Field(default_factory=dict)
+    skip_dg_generation: dict[str, bool] = Field(default_factory=dict)
+
+
+# Which of ScopeOverrides' fields merge per group and which replace whole.
+_SCOPE_MERGED_FIELDS = (
+    "commodity_code_overrides", "commodity_description_overrides",
+    "commodity_sequence_overrides", "skip_commodity_filing", "skip_dg_generation",
+)
+_SCOPE_REPLACED_FIELDS = ("commodity_group_order",)
+
+
 class MappingProfile(BaseModel):
     name: str = "default"
     created_by: Optional[str] = None
@@ -138,6 +165,37 @@ class MappingProfile(BaseModel):
     # the raw MRG shape doesn't carry an equivalent add-on for them.
     include_tad_d7: bool = False
     tad_d7_addon: Decimal = Decimal("700")
+
+    # {sub-lane: what that scope answers differently} - see ScopeOverrides.
+    # Empty for every single-scope lane, and for a multi-scope lane whose
+    # scopes agree, which is the normal case.
+    by_scope: dict[str, ScopeOverrides] = Field(default_factory=dict)
+
+    def for_scope(self, scope: str) -> "MappingProfile":
+        """This profile as it applies to one sub-lane.
+
+        Returns self when that scope answers nothing differently, which
+        is the common case - so a single-scope lane, and a multi-scope
+        lane nobody has customized per scope, take exactly the path they
+        took before per-scope settings existed.
+
+        A scope's entries merge over the filing-wide ones per group, so
+        changing a shared setting still reaches every scope that hasn't
+        overridden that particular group.
+        """
+        overrides = self.by_scope.get(scope)
+        if overrides is None:
+            return self
+        update: dict = {}
+        for field_name in _SCOPE_MERGED_FIELDS:
+            scoped = getattr(overrides, field_name)
+            if scoped:
+                update[field_name] = {**getattr(self, field_name), **scoped}
+        for field_name in _SCOPE_REPLACED_FIELDS:
+            scoped = getattr(overrides, field_name)
+            if scoped:
+                update[field_name] = scoped
+        return self.model_copy(update=update) if update else self
 
     def files_tad_dg(self, scope: str) -> bool:
         """Does this TAD scope file its D/DG duplicate rows?

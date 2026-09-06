@@ -40,6 +40,8 @@ class WizardState:
     # re-run reflects the OVERRIDDEN codes, which would make a second
     # round of edits key against the wrong dict).
     default_commodity_groups: list[tuple[str, str]] = field(default_factory=list)
+    # The same, per sub-lane, for the settings' scope picker.
+    commodity_groups_by_scope: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
     # Which of those actually get a DG twin, so the settings only offer
     # to drop one where there is one to drop (LAWC's OOG never has one).
     dg_twin_groups: frozenset[str] = frozenset()

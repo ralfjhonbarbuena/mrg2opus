@@ -15,13 +15,16 @@ from decimal import Decimal
 
 import streamlit as st
 
-from mrg2opus.presets.models import MappingProfile
+from mrg2opus.presets.models import MappingProfile, ScopeOverrides
+
+# The scope picker's "not one scope, the shared settings" option.
+_ALL_SCOPES = "All scopes"
 
 _EDITOR_KEY_BASE = "commodity_overrides_editor"
 _EDITOR_NONCE = "commodity_overrides_editor_nonce"
 
 
-def _editor_key(prefix: str) -> str:
+def _editor_key(prefix: str, scope: str = "") -> str:
     """The grid's widget key, carrying a nonce that Refresh bumps.
 
     Changing the KEY is what actually resets st.data_editor. Popping
@@ -31,10 +34,11 @@ def _editor_key(prefix: str) -> str:
     edits stay on screen. A key it has never seen is a brand-new widget,
     drawn from the DataFrame we pass rather than from any retained state.
 
-    The prefix keeps Convert's grid and Compare's apart; two widgets
-    sharing a key would share their edits.
+    The prefix keeps Convert's grid and Compare's apart, and the scope
+    keeps one sub-lane's grid from showing the previous one's edits: two
+    widgets sharing a key would share their edits.
     """
-    return f"{prefix}_{_EDITOR_KEY_BASE}_{st.session_state.get(prefix + _EDITOR_NONCE, 0)}"
+    return f"{prefix}_{scope}_{_EDITOR_KEY_BASE}_{st.session_state.get(prefix + _EDITOR_NONCE, 0)}"
 
 
 def _refresh_editor(prefix: str) -> None:
@@ -59,9 +63,33 @@ def reset_filing_settings(prefix: str) -> None:
     _refresh_editor(prefix)
 
 
+def _with_scope_overrides(
+    profile: MappingProfile, scope: str, settings: dict
+) -> dict[str, ScopeOverrides]:
+    """`profile.by_scope` with `scope` set to just the settings that
+    differ from the filing-wide ones, and dropped entirely when none do."""
+    kept: dict = {}
+    for field_name, value in settings.items():
+        shared = getattr(profile, field_name)
+        if isinstance(value, list):
+            if value != shared:
+                kept[field_name] = value
+        else:
+            differing = {k: v for k, v in value.items() if shared.get(k) != v}
+            # A group the shared settings answer but this scope's grid
+            # does not is an override too - it says "not set here".
+            if differing:
+                kept[field_name] = differing
+    by_scope = {k: v for k, v in profile.by_scope.items() if k != scope}
+    if kept:
+        by_scope[scope] = ScopeOverrides(**kept)
+    return by_scope
+
+
 def render_filing_settings(
     profile: MappingProfile,
     groups: list[tuple[str, str]],
+    groups_by_scope: dict[str, list[tuple[str, str]]],
     dg_twin_groups: frozenset[str],
     reefer_nor_groups: frozenset[str],
     scopes: list[str],
@@ -76,8 +104,11 @@ def render_filing_settings(
     for by default (commodity_utils.groups_offering_dg_twins), and
     `reefer_nor_groups` the reefer and NOR groups, which can be asked for
     one whether or not the lane files it (parsers.common.dg_twins).
-    `scopes` is the parse's own sub-lane keys, which TAD files as separate
-    workbooks and can answer the DG question separately.
+    `scopes` is the parse's own sub-lane keys and `groups_by_scope` which
+    groups each of them has. A lane with sub-lanes files each as its own
+    OPUS workbook, so the commodity settings are asked per scope as well
+    as filing-wide - see the scope picker below and
+    MappingProfile.for_scope.
 
     Returns a NEW profile built from what is on screen rather than
     mutating the one passed in, so the caller decides when it takes
@@ -85,6 +116,29 @@ def render_filing_settings(
     straight away and re-checks on "Run Comparison".
     """
     st.markdown("#### Commodity groups")
+    # Which scope these settings are for. "All scopes" edits the
+    # filing-wide values; picking one edits only what that scope answers
+    # differently, so a shared setting still reaches every scope that
+    # hasn't overridden that particular group.
+    editing_scope = None
+    if len(scopes) > 1:
+        choice = st.selectbox(
+            "Settings for",
+            options=[_ALL_SCOPES, *scopes],
+            help=(
+                "Each sub-lane is filed as its own OPUS workbook and can answer these differently - one "
+                "scope's own commodity code, description, order or skips. Anything you leave alone here "
+                "follows the All scopes value."
+            ),
+            key=f"{key_prefix}_scope_choice",
+        )
+        editing_scope = None if choice == _ALL_SCOPES else choice
+    # What the grid shows: the filing-wide settings, or one scope's own
+    # view of them (its overrides merged over the shared ones).
+    view = profile if editing_scope is None else profile.for_scope(editing_scope)
+    if editing_scope is not None:
+        groups = groups_by_scope.get(editing_scope, [])
+        st.caption(f"Editing **{editing_scope}** only. Blank cells here fall back to the All scopes value.")
     st.caption(
         "Every column here is yours to change. **CMDT Code** is numbered G0001, G0002, ... in the order the "
         "groups were found - a placeholder, never a code read out of your file, since there is no commodity "
@@ -96,7 +150,7 @@ def render_filing_settings(
         "out of the filing entirely - to keep a group but drop only its DG rows, see Dangerous Goods below."
     )
     if groups:
-        existing_order = profile.commodity_group_order
+        existing_order = view.commodity_group_order
         # Every override dict is keyed by the group's DEFAULT description
         # (desc) - see parsers/common/commodity.py's module docstring. The
         # parser's own structural code can't serve as that key (several
@@ -108,10 +162,10 @@ def render_filing_settings(
         editor_rows = [
             {
                 "order": (existing_order.index(desc) + 1) if desc in existing_order else len(existing_order) + i + 1,
-                "code": profile.commodity_code_overrides.get(desc, code),
-                "description": profile.commodity_description_overrides.get(desc, desc),
-                "override_cmdt_seq": profile.commodity_sequence_overrides.get(desc),
-                "skip_filing": profile.skip_commodity_filing.get(desc, False),
+                "code": view.commodity_code_overrides.get(desc, code),
+                "description": view.commodity_description_overrides.get(desc, desc),
+                "override_cmdt_seq": view.commodity_sequence_overrides.get(desc),
+                "skip_filing": view.skip_commodity_filing.get(desc, False),
             }
             for i, (code, desc) in enumerate(groups)
         ]
@@ -163,7 +217,7 @@ def render_filing_settings(
                     help="Leave this commodity group out of the filing altogether.",
                 ),
             },
-            key=_editor_key(key_prefix),
+            key=_editor_key(key_prefix, editing_scope or ""),
         )
     else:
         edited, row_keys = [], []
@@ -222,6 +276,7 @@ def render_filing_settings(
     st.markdown("#### Dangerous Goods (DG)")
     is_tad_lane = bool(lane_id and lane_id.startswith("TAD-"))
     group_descriptions = [desc for _code, desc in groups]
+
     tad_dg_by_scope = dict(profile.tad_dg_by_scope)
     if is_tad_lane:
         # One answer per SERVICE SCOPE rather than one for the filing.
@@ -249,7 +304,7 @@ def render_filing_settings(
         # On unless every group is currently skipped.
         dg_currently_on = not (
             bool(group_descriptions)
-            and all(profile.skip_dg_generation.get(d, False) for d in group_descriptions)
+            and all(view.skip_dg_generation.get(d, False) for d in group_descriptions)
         )
         generate_dg = st.checkbox(
             "File D/DG duplicate rows",
@@ -294,7 +349,7 @@ def render_filing_settings(
                     on_by_default = desc in dg_twin_groups
                     skip_dg_choices[desc] = not st.checkbox(
                         labels.get(desc, desc),
-                        value=not profile.skip_dg_generation.get(desc, not on_by_default),
+                        value=not view.skip_dg_generation.get(desc, not on_by_default),
                         key=f"{key_prefix}_dg_group_{desc}",
                     )
         else:
@@ -382,14 +437,34 @@ def render_filing_settings(
     ]
 
 
+    commodity_settings = {
+        "commodity_code_overrides": code_overrides,
+        "commodity_description_overrides": description_overrides,
+        "commodity_sequence_overrides": sequence_overrides,
+        "commodity_group_order": commodity_group_order,
+        "skip_dg_generation": skip_dg_generation,
+        "skip_commodity_filing": skip_commodity_filing,
+    }
+    if editing_scope is not None:
+        # Only what this scope answers DIFFERENTLY is kept - an entry
+        # equal to the filing-wide answer would freeze that group here,
+        # so a later change to the shared setting would silently stop
+        # reaching this scope.
+        return profile.model_copy(update={
+            "by_scope": _with_scope_overrides(profile, editing_scope, commodity_settings),
+            "excluded_charge_codes": excluded_charge_codes,
+            "rfa_effective_date": rfa_effective_date,
+            "rfa_expiry_date": rfa_expiry_date,
+            "include_vertical_rates": include_vertical_rates,
+            "generate_tad_dg_duplicate": generate_tad_dg_duplicate,
+            "tad_dg_by_scope": tad_dg_by_scope,
+            "include_tad_d7": include_tad_d7,
+            "tad_d7_addon": tad_d7_addon,
+        })
+
     return profile.model_copy(
         update={
-            "commodity_code_overrides": code_overrides,
-            "commodity_description_overrides": description_overrides,
-            "commodity_sequence_overrides": sequence_overrides,
-            "commodity_group_order": commodity_group_order,
-            "skip_dg_generation": skip_dg_generation,
-            "skip_commodity_filing": skip_commodity_filing,
+            **commodity_settings,
             "excluded_charge_codes": excluded_charge_codes,
             "rfa_effective_date": rfa_effective_date,
             "rfa_expiry_date": rfa_expiry_date,

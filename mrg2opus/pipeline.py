@@ -36,20 +36,29 @@ def run_parser(parser: BaseMRGParser, workbook, profile: MappingProfile) -> dict
     # an opt-in, so the profile has to say so explicitly - an absent flag
     # means "off" here, the opposite of the dry groups' default, which is
     # why this reads .get(group, True) rather than .get(group, False).
-    enabled = frozenset(
-        group for group in reefer_and_nor_groups(row_sets)
-        if not profile.skip_dg_generation.get(group, True)
-    )
-    if enabled:
-        row_sets = {suffix: add_reefer_and_nor_dg_twins(rs, enabled) for suffix, rs in row_sets.items()}
-    # Before everything else, so the dropped groups are absent from the
-    # ordering, the sequence fixups and the VERTICAL RATES derivation
-    # alike - that last one is how they stay out of that sheet.
-    skipped = {desc for desc, skip in profile.skip_commodity_filing.items() if skip}
-    if skipped:
-        row_sets = {suffix: drop_commodity_groups(rs, skipped) for suffix, rs in row_sets.items()}
-    if profile.commodity_group_order:
-        row_sets = {suffix: reorder_row_set(rs, profile.commodity_group_order) for suffix, rs in row_sets.items()}
+    # Every step below is per SCOPE, and a scope can answer the commodity
+    # settings differently (MappingProfile.for_scope) - so each reads its
+    # own view of the profile rather than the filing-wide one.
+    twin_groups = reefer_and_nor_groups(row_sets)
+    enabled_anywhere = False
+    built: dict[str, OpusRowSet] = {}
+    for suffix, row_set in row_sets.items():
+        scoped = profile.for_scope(suffix)
+        enabled = frozenset(g for g in twin_groups if not scoped.skip_dg_generation.get(g, True))
+        enabled_anywhere = enabled_anywhere or bool(enabled)
+        if enabled:
+            row_set = add_reefer_and_nor_dg_twins(row_set, enabled)
+        # Before everything else, so the dropped groups are absent from the
+        # ordering, the sequence fixups and the VERTICAL RATES derivation
+        # alike - that last one is how they stay out of that sheet.
+        skipped = {desc for desc, skip in scoped.skip_commodity_filing.items() if skip}
+        if skipped:
+            row_set = drop_commodity_groups(row_set, skipped)
+        if scoped.commodity_group_order:
+            row_set = reorder_row_set(row_set, scoped.commodity_group_order)
+        built[suffix] = row_set
+    row_sets = built
+    enabled = enabled_anywhere
     # After reordering (blocks move as units, so this stays correct) and
     # before the VERTICAL RATES derivation, which reads rates' cmdt_seq.
     for rs in row_sets.values():

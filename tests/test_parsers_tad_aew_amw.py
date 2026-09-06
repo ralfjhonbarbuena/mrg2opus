@@ -10,8 +10,8 @@ import pytest
 
 from mrg2opus.audit.compare import _normalize, diff_by_key, rates_row_key, read_arbs_sheet, read_rates_sheet
 from mrg2opus.excel_io.merge import merge_workbooks
-from mrg2opus.parsers.tad_aew_amw import TADAewAmwParser
-from mrg2opus.presets.models import MappingProfile
+from mrg2opus.parsers.tad_aew_amw import DEFAULT_JP_DESCRIPTION, TADAewAmwParser
+from mrg2opus.presets.models import MappingProfile, ScopeOverrides
 from mrg2opus.schema import opus_columns as cols
 
 REFERENCE_DIR = Path(__file__).resolve().parents[1] / "reference"
@@ -503,3 +503,31 @@ def test_one_run_reproduces_every_scope_of_this_filing_round():
         ours = row_sets[scope].rates
         assert len(ours) == len(rows), f"{scope}: {len(ours)} rows against the filing's {len(rows)}"
         assert {(r.prefix, r.cgo_type) for r in ours} == {(r["prefix"], r["cgo_type"]) for r in rows}, scope
+
+
+def test_the_two_japan_scopes_can_file_one_group_under_their_own_codes():
+    """The gap per-scope settings exist to close: JAPAN POLLY files the
+    same commodity group as G0011 for its AEW scope and G0001 for its
+    AMW one. This parser's own DEFAULT_JP_CODE_BY_SCOPE already knew
+    that, but every commodity setting is keyed by the group's default
+    description - which spans both scopes - so the moment anything set a
+    code for that group, both scopes got the one value. Overriding it per
+    scope is what puts the difference back.
+    """
+    profile = MappingProfile(
+        rfa_effective_date=AEW_RFA_EFFECTIVE, rfa_expiry_date=RFA_EXPIRY,
+        commodity_code_overrides={DEFAULT_JP_DESCRIPTION: "G0001"},
+        by_scope={"JAPAN AEW": ScopeOverrides(
+            commodity_code_overrides={DEFAULT_JP_DESCRIPTION: "G0011"}
+        )},
+    )
+    row_sets = TADAewAmwParser().run_multi(_load_merged_workbook(), profile)
+
+    ref_wb = openpyxl.load_workbook(GROUND_TRUTH["JAPAN"], data_only=True, read_only=True)
+    for scope, sheet in (("JAPAN AEW", "AEW RATES"), ("JAPAN AMW", "AMW RATES")):
+        expected = {r["commodity_group_code"] for r in read_rates_sheet(ref_wb, sheet)}
+        assert {r.commodity_group_code for r in row_sets[scope].rates} == expected, scope
+    ref_wb.close()
+
+    # The other two scopes are untouched by a setting that named neither.
+    assert {r.commodity_group_code for r in row_sets["AEW"].rates} == {"G0001"}

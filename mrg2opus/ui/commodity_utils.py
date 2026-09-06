@@ -31,6 +31,17 @@ def distinct_commodity_groups(row_sets: dict) -> list[tuple[str, str]]:
     return [(code, description) for description, code in seen.items()]
 
 
+def commodity_groups_by_scope(row_sets: dict) -> dict[str, list[tuple[str, str]]]:
+    """distinct_commodity_groups(), asked one sub-lane at a time.
+
+    A lane with sub-lanes files each as its own OPUS workbook and can
+    answer the commodity settings differently per scope, so the editor
+    needs to know which groups each scope actually has - two of TAD
+    AEW/AMW's four share one group and the other two share another.
+    """
+    return {scope: distinct_commodity_groups({scope: rs}) for scope, rs in row_sets.items()}
+
+
 def assign_sequential_default_codes(groups: list[tuple[str, str]]) -> dict[str, str]:
     """Every distinct commodity group gets its OWN unique output code by
     default - G0001, G0002, G0003, ... in the order groups were first

@@ -236,7 +236,10 @@ class EAFParser(BaseMRGParser):
     def run_multi(self, wb: Workbook, config: MappingProfile | None = None) -> dict[str, OpusRowSet]:
         config = config or MappingProfile()
         raw = self.parse_raw(wb)
-        return {suffix: self._to_opus_rows_for_sublane(data, config) for suffix, data in raw.tables.items()}
+        return {
+            suffix: self._to_opus_rows_for_sublane(data, config.for_scope(suffix))
+            for suffix, data in raw.tables.items()
+        }
 
 
 def _to_decimal(value: float | None) -> Decimal | None:

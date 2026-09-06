@@ -338,7 +338,10 @@ class TADWmwWewParser(BaseMRGParser):
         config = config or MappingProfile()
         raw = self.parse_raw(wb)
         scopes: dict[str, ScopeData] = raw.tables["scopes"]
-        return {scope: self._build_one_scope(data, config) for scope, data in scopes.items()}
+        return {
+            scope: self._build_one_scope(data, config.for_scope(scope))
+            for scope, data in scopes.items()
+        }
 
 
 register(

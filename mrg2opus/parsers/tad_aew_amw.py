@@ -101,17 +101,14 @@ ways (AEW 2026-08-30, AMW 2026-08-19, Japan-AEW using the plain validity
 window and Japan-AMW 2026-08-30) even though both are single filing-wide
 settings.
 
-KNOWN GAP, left open deliberately (user-directed, 2026-09-06): the two
-Japan scopes file the SAME commodity group under different codes -
-Japan-AEW as G0011, Japan-AMW as G0001 - and we cannot reproduce that.
-Every commodity setting (code, description, CMDT seq, order, Skip Filing,
-Skip DG) is keyed by the group's default description, which here spans
-both scopes, so they necessarily share one code. Filing-wide settings
-diverging per scope is the same shape as the two inconsistencies above,
-and JAPAN POLLY is the VBA tool mid-pipeline rather than a finished
-filing, so this is likelier a filing-prep artifact than a rule. Making it
-settable would mean a per-scope override layer merged in before each
-scope is built - decided not worth it for one artifact in one file.
+A third, same shape: the two Japan scopes file the SAME commodity group
+under different codes - Japan-AEW as G0011, Japan-AMW as G0001. This
+file's DEFAULT_JP_CODE_BY_SCOPE knows that, but every commodity setting
+(code, description, CMDT seq, order, Skip Filing, Skip DG) is keyed by
+the group's default description, which here spans both scopes - so the
+moment anything set a code for that group, both scopes took the one
+value. Settable per scope now (MappingProfile.for_scope / by_scope, and
+the settings' own scope picker).
 """
 from __future__ import annotations
 
@@ -673,7 +670,10 @@ class TADAewAmwParser(BaseMRGParser):
         config = config or MappingProfile()
         raw = self.parse_raw(wb)
         scopes: dict[str, ScopeData] = raw.tables["scopes"]
-        return {scope: self._build_one_scope(data, config) for scope, data in scopes.items()}
+        return {
+            scope: self._build_one_scope(data, config.for_scope(scope))
+            for scope, data in scopes.items()
+        }
 
 
 register(
