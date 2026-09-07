@@ -133,3 +133,21 @@ def test_laec_lux_freetime_matches_ground_truth(raw_path, opus_path, rfa_eff, rf
         for field_name in cols.FREETIME_ROW_FIELDS:
             gv, ev = _norm(g.get(field_name)), _norm(e.get(field_name))
             assert gv == ev, f"row {i} {field_name}: {gv!r} != {ev!r}"
+
+
+@pytest.mark.parametrize("raw_path,opus_path,rfa_eff,rfa_exp", _PAIRS)
+def test_lux_add_on_destinations_have_no_dg_twin(raw_path, opus_path, rfa_eff, rfa_exp):
+    """The exception that made the main lane's bug look like a rule.
+
+    LAEC's own add-on destinations all carry a DG twin; this lane's do
+    not - reference/2_OPUS/49 and 50 each file 12 D/DR add-on rows and no
+    D/DG at all. Pinned so nobody makes the two lanes agree by symmetry.
+    """
+    rows = _run(raw_path).rates
+    add_ons = [r for r in rows if r.destination_code in {"ARUSH", "ARZAE", "ARLPG"}]
+
+    assert add_ons, "expected this lane to build add-on destinations at all"
+    assert not [r for r in add_ons if r.cgo_type == "DG"]
+    # It does file DG elsewhere, so this is that lane's answer for the
+    # add-ons specifically, not DG being off.
+    assert [r for r in rows if r.cgo_type == "DG"]

@@ -34,19 +34,10 @@ pytestmark = pytest.mark.skipif(
 #     memory), same category of gap already documented for CSE/EAF/LAWC.
 RATES_IGNORE_FIELDS = {"cmdt_seq", "route_seq", "type", "commodity_group_description", "commodity_group_code"}
 
-# 210 real ground-truth rows (all cgo_type=DG, prefix=D, all to Argentina
-# destinations e.g. ARLPG/ARZAE/ARUSH) have no generated counterpart at
-# all - a real gap (some Argentina-destination DG-duplicate rule the
-# parser doesn't implement, likely related to the "ECSA Add-On" raw sheet)
-# found while migrating this test to real reference/ ground truth, not
-# chased down here - flagged as a separate follow-up.
-_KNOWN_MISSING_DG_DESTINATION_PREFIX = "AR"
-
-
-def _is_known_missing_gap(key: tuple) -> bool:
-    return key[2] == "DG" and key[3] == "D" and str(key[1]).startswith(_KNOWN_MISSING_DG_DESTINATION_PREFIX)
-
-
+# The 210 Argentina-destination DG rows this test used to exempt are
+# generated now: they are the ECSA Add-On destinations, and their base
+# D/DR rows always had a DG twin while the add-ons built on top of them
+# did not (see laec.py's ECSA step). Nothing is exempted below any more.
 def _run_laec():
     wb = openpyxl.load_workbook(RAW_PATH, data_only=True)
     parser = LAECParser()
@@ -61,8 +52,7 @@ def test_laec_rates_matches_ground_truth():
     expected = read_rates_sheet(ref_wb, "RATES")
 
     result = diff_by_key(generated, expected, key_fn=rates_row_key, fields=cols.RATES_ROW_FIELDS, ignore_fields=RATES_IGNORE_FIELDS)
-    missing = {k for k in result.missing if not _is_known_missing_gap(k)}
-    assert not missing, f"missing {len(missing)} expected rows, e.g. {list(missing)[:5]}"
+    assert not result.missing, f"missing {len(result.missing)} expected rows, e.g. {list(result.missing)[:5]}"
     assert not result.extra, f"{len(result.extra)} unexpected generated rows, e.g. {list(result.extra)[:5]}"
     assert not result.field_mismatches, f"{len(result.field_mismatches)} field mismatches, e.g. {result.field_mismatches[:10]}"
 
@@ -210,3 +200,51 @@ def test_laec_tier1_freetime_matches_ground_truth_by_content():
     from collections import Counter
 
     assert Counter(generated) == Counter(expected) - Counter([expected[-1]])  # expected's extra ARZAE row is the known gap
+
+
+# Ushuaia, Zarate and La Plata - the destinations the "ECSA Add-On" raw
+# sheet prices as a T/S port's rate plus a fixed add-on.
+_ECSA_ADD_ON_DESTINATIONS = {"ARUSH", "ARZAE", "ARLPG"}
+
+
+def test_ecsa_add_on_destinations_get_the_same_dg_twin_their_base_rows_do():
+    """One D/DR row in five leaves this lane through the add-on step, and
+    those rows used to come out with no DG counterpart at all - 210 rows
+    in this week's filing, every one of which the real file has.
+
+    Counted against the filing rather than against a fixed number, so
+    this says "every add-on route has its twin" rather than "there are
+    210 of them"."""
+    generated = [r.model_dump() for r in _run_laec().rates]
+    ref_wb = openpyxl.load_workbook(OPUS_PATH, data_only=True, read_only=True)
+    expected = read_rates_sheet(ref_wb, "RATES")
+    ref_wb.close()
+
+    def add_on_routes(rows, cgo):
+        return {
+            rates_row_key(r) for r in rows
+            if r["destination_code"] in _ECSA_ADD_ON_DESTINATIONS
+            and (r["prefix"], r["cgo_type"]) == ("D", cgo)
+        }
+
+    ours_dr, ours_dg = add_on_routes(generated, "DR"), add_on_routes(generated, "DG")
+    assert ours_dr, "expected the add-on destinations to be generated at all"
+    assert len(ours_dg) == len(ours_dr), "every add-on route should have a DG twin"
+    assert len(add_on_routes(expected, "DG")) == len(ours_dg)
+
+
+def test_skipping_dg_for_a_group_skips_its_add_on_rows_too():
+    """The add-ons follow their base rows' answer rather than deciding
+    for themselves - so unticking DG for a group leaves nothing of it
+    behind at the add-on destinations either."""
+    wb = openpyxl.load_workbook(RAW_PATH, data_only=True)
+    profile = MappingProfile(skip_dg_generation={COMMODITY_NON_ISC_MAIN[1]: True})
+    rows = LAECParser().run(wb, profile).rates
+
+    add_on_dg = [
+        r for r in rows
+        if r.destination_code in _ECSA_ADD_ON_DESTINATIONS and r.cgo_type == "DG"
+    ]
+    groups = {r.commodity_group_description for r in add_on_dg}
+    assert COMMODITY_NON_ISC_MAIN[1] not in groups
+    assert groups, "the group that was NOT skipped should still have its add-on DG rows"

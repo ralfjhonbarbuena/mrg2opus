@@ -341,10 +341,12 @@ class LAECParser(BaseMRGParser):
 
         rates: list[RatesRow] = []
         rates_port_port: list[RatesRow] = []
-        # (commodity code) -> {(origin_code, destination_code): RatesRow}
-        # for the base D/DR rows, used by the ECSA Add-On step below to
-        # find each origin's T/S-port rate to build on top of.
-        base_rows_by_commodity: dict[str, dict[tuple[str, str], RatesRow]] = {}
+        # (commodity code) -> ({(origin_code, destination_code): RatesRow},
+        # whether this group files DG). The rows are the base D/DR ones the
+        # ECSA Add-On step below builds each extra destination on top of;
+        # the flag is carried rather than re-derived so an add-on row
+        # always answers the DG question exactly as its base row did.
+        base_rows_by_commodity: dict[str, tuple[dict[tuple[str, str], RatesRow], bool]] = {}
         # Descriptions now default per-sheet (see COMMODITY_NON_ISC_MAIN's
         # comment), so notes can't be built per-group as rows are built -
         # two groups might share a description (default, override, or the
@@ -362,6 +364,10 @@ class LAECParser(BaseMRGParser):
             output_code = resolve_commodity_code(default_description, code, config)
             charge_codes = ISC_CHARGE_CODES if code == COMMODITY_ISC_MAIN[0] else NON_ISC_CHARGE_CODES
 
+            files_dg = (
+                self.container_map.cgo_type == "DR"
+                and not config.skip_dg_generation.get(default_description, False)
+            )
             dr_rows, dr_pp, dg_rows, dg_pp = [], [], [], []
             base_by_key: dict[tuple[str, str], RatesRow] = {}
 
@@ -373,12 +379,12 @@ class LAECParser(BaseMRGParser):
                 base_by_key[(row.origin_code, row.destination_code)] = row
                 dr_rows.append(row)
 
-                if self.container_map.cgo_type == "DR" and not config.skip_dg_generation.get(default_description, False):
+                if files_dg:
                     dg_row = row.model_copy(update={"cgo_type": "DG"})
                     dg_pp.extend(explode_rates_row(dg_row))
                     dg_rows.append(dg_row)
 
-            base_rows_by_commodity[code] = base_by_key
+            base_rows_by_commodity[code] = (base_by_key, files_dg)
             rates.extend(group_by_destination(dr_rows))
             rates.extend(group_by_destination(dg_rows))
             rates_port_port.extend(group_by_destination(dr_pp))
@@ -456,11 +462,21 @@ class LAECParser(BaseMRGParser):
             if o_rows:
                 note_specs.append(CommodityNoteSpec(description, data.validity_start, data.validity_end, charge_codes))
 
-        # ECSA Add-On: extra destinations built from an existing
-        # destination's ("T/S Port") rate plus a fixed add-on - verified
-        # for G0015/G0016 only, no DG duplicate.
-        for code, base_by_key in base_rows_by_commodity.items():
-            extra_rows, extra_pp = [], []
+        # ECSA Add-On: extra destinations (Ushuaia, Zarate, La Plata)
+        # built from an existing destination's ("T/S Port") rate plus a
+        # fixed add-on.
+        #
+        # They get their DG twin like any other row here. They used to get
+        # none, on a reading that predates this lane's own reference files
+        # - all five of them file DG for these destinations, matched
+        # one-for-one with the DR rows (210 of each in a FAK week, 378 in
+        # a Tier 1 one), and without the twin one D/DR row in five came
+        # out of this lane with no DG counterpart at all (user-reported,
+        # 2026-09-07). LAEC-LUX is the exception that made the old comment
+        # look right: its own add-on rows really do have no DG twin, which
+        # is why that parser's copy of this step still builds none.
+        for code, (base_by_key, files_dg) in base_rows_by_commodity.items():
+            extra_rows, extra_pp, extra_dg, extra_dg_pp = [], [], [], []
             origin_codes_seen = {origin for origin, _dest in base_by_key}
             for origin_code in origin_codes_seen:
                 for addon in data.ecsa_add_ons:
@@ -483,8 +499,14 @@ class LAECParser(BaseMRGParser):
                     )
                     extra_rows.append(new_row)
                     extra_pp.extend(explode_rates_row(new_row))
+                    if files_dg:
+                        dg_row = new_row.model_copy(update={"cgo_type": "DG"})
+                        extra_dg.append(dg_row)
+                        extra_dg_pp.extend(explode_rates_row(dg_row))
             rates.extend(group_by_destination(extra_rows))
+            rates.extend(group_by_destination(extra_dg))
             rates_port_port.extend(group_by_destination(extra_pp))
+            rates_port_port.extend(group_by_destination(extra_dg_pp))
 
         arbs = build_arbs(data.yangtze_rows, data.yangtze_eff_date, data.yangtze_exp_date)
 
@@ -748,7 +770,10 @@ class LAECLuxParser(LAECParser):
 
         # ECSA Add-On: extra destinations built from an existing
         # destination's ("T/S Port") rate plus a fixed add-on - no DG
-        # duplicate (same as the main lane's own verified behavior).
+        # duplicate, which is this lane's own answer and NOT the main
+        # lane's: reference/2_OPUS/49 and 50 each file 12 D/DR add-on rows
+        # and no D/DG at all, where the main lane matches every one of
+        # its add-on DR rows with a DG twin.
         extra_rows, extra_pp = [], []
         origin_codes_seen = {origin for origin, _dest in base_by_key}
         for origin_code in origin_codes_seen:
