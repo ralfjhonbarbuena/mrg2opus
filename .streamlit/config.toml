@@ -51,6 +51,14 @@ linkColor = "#D463A3"                 # magenta lightened 35%; 4.59:1, clears AA
 dataframeHeaderBackgroundColor = "#004D6C"
 
 [server]
-# Uploaded MRG workbooks are large; the 200MB default cap is what the
-# uploader already advertises to the user.
-maxUploadSize = 200
+# Measured against every file in reference/, September 2026: the largest
+# raw MRG is 1.65 MB, the largest real OPUS filing 2.68 MB, and the
+# largest workbook this tool itself writes 1.82 MB (LAWC, 39,424 rows
+# across 8 sheets). Nothing a filer legitimately uploads comes near 3 MB.
+#
+# 25 is ~9x the largest of those, which leaves room for a wider lane or a
+# workbook carrying images, while the number the uploader advertises
+# stops reading as "any file at all". Streamlit's cap is global and
+# per-file; the settings-file import checks its own much smaller limit in
+# ui/filing_settings.py, since a preset is a few KB.
+maxUploadSize = 25

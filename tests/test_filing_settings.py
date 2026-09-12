@@ -300,3 +300,29 @@ def test_every_block_of_every_scope_gets_a_row():
 
     assert len(blocks) == 5
     assert [b.scope for b in blocks] == ["WEW", "WEW", "WMW", "WMW", "WMW"]
+
+
+def test_a_workbook_dropped_into_the_settings_import_is_named_as_one():
+    """Streamlit's cap is global and set for workbooks, so the uploader
+    advertises that number here too. This is the limit that applies."""
+    _clear("convert")
+    huge = _Upload("LWE (20260815).xlsx", b"x" * (filing_settings._MAX_PRESET_BYTES + 1))
+
+    _import_for("convert", huge, "LAWC")
+
+    assert _staged("convert") is None
+    problem = st.session_state["convert" + filing_settings._IMPORT_ERROR]
+    assert "LWE (20260815).xlsx" in problem and "MB" in problem
+
+
+def test_a_real_settings_file_is_nowhere_near_the_limit():
+    """The guard has to be loose enough that no genuine preset trips it -
+    the ones in data/presets are under 2 KB."""
+    exported = export_profile(MappingProfile(
+        name="fat", lane_id="LAWC",
+        commodity_code_overrides={f"GROUP {i}": f"G{i:04d}" for i in range(200)},
+        by_scope={s: ScopeOverrides(commodity_code_overrides={f"GROUP {i}": "X" for i in range(50)})
+                  for s in ("AEW", "AMW", "JAPAN AEW", "JAPAN AMW")},
+    ))
+
+    assert len(exported.encode()) < filing_settings._MAX_PRESET_BYTES / 10

@@ -31,6 +31,15 @@ _IMPORT_ERROR = "preset_import_error"
 # "Import anyway" button rather than thrown away.
 _IMPORT_MISMATCH = "preset_import_mismatch"
 
+# A settings file is a few KB - the two in data/presets are under 2 - and
+# the biggest imaginable one, every block of every scope overridden, is
+# still tens. Streamlit's upload cap is global and set for workbooks
+# (.streamlit/config.toml), so the uploader below advertises that number
+# whatever it is asked for; this is the limit that actually applies here.
+# 1 MB is ~100x any real preset, which makes anything over it a different
+# kind of file rather than a big one.
+_MAX_PRESET_BYTES = 1_048_576
+
 _EDITOR_KEY_BASE = "commodity_overrides_editor"
 _EDITOR_NONCE = "commodity_overrides_editor_nonce"
 
@@ -128,8 +137,16 @@ def _import_preset(prefix: str, upload_key: str, lane_id: str | None = None) -> 
     if uploaded is None:
         st.session_state[prefix + _IMPORT_ERROR] = "Choose a file first."
         return
+    data = uploaded.getvalue()
+    if len(data) > _MAX_PRESET_BYTES:
+        st.session_state[prefix + _IMPORT_ERROR] = (
+            f"{uploaded.name} is {len(data) / 1_048_576:.1f} MB. A settings file is a few kilobytes, so "
+            "this is a different kind of file - a workbook, perhaps."
+        )
+        st.session_state.pop(prefix + _IMPORT_MISMATCH, None)
+        return
     try:
-        profile = import_profile(uploaded.getvalue())
+        profile = import_profile(data)
     except Exception as exc:  # noqa: BLE001 - the reason is shown to the user
         st.session_state[prefix + _IMPORT_ERROR] = (
             f"{uploaded.name} isn't a settings file this can read. ({type(exc).__name__})"
@@ -189,7 +206,11 @@ def _render_presets(profile: MappingProfile, key_prefix: str, lane_id: str | Non
         with col_import:
             st.markdown("**Import**")
             upload_key = f"{key_prefix}_preset_import"
-            st.file_uploader("A settings file (.json)", type=["json"], key=upload_key)
+            st.file_uploader(
+                "A settings file (.json)", type=["json"], key=upload_key,
+                help="One exported from here. A few kilobytes - the size the uploader advertises is the "
+                     "app-wide limit for workbooks, not for this.",
+            )
             st.button(
                 "Import settings", key=f"{key_prefix}_preset_import_go",
                 on_click=_import_preset, args=(key_prefix, upload_key, lane_id),
