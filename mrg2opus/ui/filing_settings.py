@@ -322,7 +322,7 @@ def render_filing_settings(
             "own row here. **Dates & surcharges** is what tells them apart; it is read-only, because it "
             "describes the rows rather than setting anything."
         )
-    if groups:
+    if rows_for:
         existing_order = view.commodity_group_order
         # Every override dict is keyed by the group's DEFAULT description
         # (desc) - see parsers/common/commodity.py's module docstring. The

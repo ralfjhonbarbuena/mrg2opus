@@ -6,10 +6,19 @@ from __future__ import annotations
 
 import streamlit as st
 
+from datetime import date
+
 from mrg2opus.presets.models import MappingProfile, ScopeOverrides
 from mrg2opus.presets.store import export_profile, import_profile, preset_filename
+from mrg2opus.schema.opus_rows import CmdtNoteRow, OpusRowSet, RatesRow
 from mrg2opus.ui import filing_settings
-from mrg2opus.ui.filing_settings import _editor_key, _refresh_editor, reset_filing_settings
+from mrg2opus.ui.commodity_utils import commodity_blocks
+from mrg2opus.ui.filing_settings import (
+    _editor_key,
+    _refresh_editor,
+    render_filing_settings,
+    reset_filing_settings,
+)
 
 
 def test_the_two_screens_get_different_editor_keys():
@@ -212,3 +221,58 @@ def test_a_bad_file_does_not_leave_a_stale_mismatch_behind():
     _import_for("convert", _Upload("junk.json", b"{not json"), "EAF")
 
     assert "convert" + filing_settings._IMPORT_MISMATCH not in st.session_state
+
+
+# --- rendering it at all ------------------------------------------------------
+# Everything above tests the pieces. These render the whole function, which
+# is what the 416 tests before them did not: a leftover `groups` reference
+# survived the rename to blocks and reached the user as a NameError with
+# every test passing. Streamlit runs bare here - widgets return their
+# defaults and nothing is drawn - so this proves the code path executes,
+# not what it looks like.
+
+def _rows(*seqs):
+    return [
+        RatesRow(
+            commodity_group_code="G0001", commodity_group_description="FAK", cmdt_seq=s,
+            origin_code="CNSHA", origin_description="Shanghai",
+            destination_code="BEANR", destination_description="Antwerp",
+            prefix="D", cgo_type="DR",
+        )
+        for s in seqs
+    ]
+
+
+def _render(blocks, scopes, lane_id, prefix):
+    return render_filing_settings(
+        MappingProfile(), blocks, frozenset({"FAK"}), frozenset(), scopes, lane_id, prefix
+    )
+
+
+def test_the_settings_render_for_a_lane_of_several_blocks():
+    notes = [
+        CmdtNoteRow(header_seq=1, charge_seq=1, code="APP",
+                    application_effective=date(2026, 9, 1), application_expires=date(2026, 9, 6)),
+        CmdtNoteRow(charge_seq=2, code="LSF"),
+        CmdtNoteRow(header_seq=2, charge_seq=1, code="APP",
+                    application_effective=date(2026, 9, 7), application_expires=date(2026, 9, 15)),
+    ]
+    blocks = commodity_blocks({"AEW": OpusRowSet(rates=_rows(1, 2), cmdt_notes=notes)})
+
+    out = _render(blocks, ["AEW"], "TAD-AEW-AMW", "smoke_tad")
+
+    assert isinstance(out, MappingProfile)
+    assert out.lane_id == "TAD-AEW-AMW"
+
+
+def test_the_settings_render_for_a_lane_of_one_block_per_group():
+    blocks = commodity_blocks({"": OpusRowSet(rates=_rows(1))})
+
+    out = _render(blocks, [""], "LAWC", "smoke_plain")
+
+    assert isinstance(out, MappingProfile)
+
+
+def test_the_settings_render_when_nothing_parsed():
+    """The empty branch is the one nobody looks at."""
+    assert isinstance(_render([], [], "LAWC", "smoke_empty"), MappingProfile)
