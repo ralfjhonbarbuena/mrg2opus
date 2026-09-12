@@ -276,3 +276,27 @@ def test_the_settings_render_for_a_lane_of_one_block_per_group():
 def test_the_settings_render_when_nothing_parsed():
     """The empty branch is the one nobody looks at."""
     assert isinstance(_render([], [], "LAWC", "smoke_empty"), MappingProfile)
+
+
+def test_a_multi_scope_lane_renders_a_table_for_every_scope():
+    """Option B: no picker, every scope on screen. The render has to
+    reach all of them, and the profile it returns has to carry all of
+    them - the old picker folded back only the scope being looked at."""
+    wew = OpusRowSet(rates=_rows(1, 2))
+    wmw = OpusRowSet(rates=_rows(1, 2, 3))
+    blocks = commodity_blocks({"WEW": wew, "WMW": wmw})
+    assert len({b.scope for b in blocks}) == 2
+
+    out = _render(blocks, ["WEW", "WMW"], "TAD-WMW-WEW", "smoke_two_scopes")
+
+    assert sorted(out.by_scope) == ["WEW", "WMW"]
+
+
+def test_every_block_of_every_scope_gets_a_row():
+    """WEW and WMW each number their blocks from 1, so five blocks share
+    three keys - all five still need a row of their own."""
+    blocks = commodity_blocks({"WEW": OpusRowSet(rates=_rows(1, 2)),
+                               "WMW": OpusRowSet(rates=_rows(1, 2, 3))})
+
+    assert len(blocks) == 5
+    assert [b.scope for b in blocks] == ["WEW", "WEW", "WMW", "WMW", "WMW"]

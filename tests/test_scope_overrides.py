@@ -148,3 +148,34 @@ def test_the_pipeline_orders_one_scope_differently():
 
     assert [r.commodity_group_description for r in row_sets["OEW"].rates] == ["FAK", "OOG"]
     assert [r.commodity_group_description for r in row_sets["OMW"].rates] == ["OOG", "FAK"]
+
+
+def test_folding_one_scope_back_does_not_drop_another():
+    """The reset. Each scope's table is folded back on its own, and the
+    fold used to rebuild the map from the profile every time - so the
+    second scope's settings wiped the first's, and edits made in a scope
+    then left behind by switching to the next were never in the profile
+    to apply."""
+    profile = MappingProfile(commodity_code_overrides={"FAK": "G0001"})
+
+    by_scope = _with_scope_overrides(
+        profile, "AEW", {"commodity_code_overrides": {"FAK #1": "G0009"}}, None
+    )
+    by_scope = _with_scope_overrides(
+        profile, "AMW", {"commodity_code_overrides": {"FAK #1": "G0008"}}, by_scope
+    )
+
+    assert sorted(by_scope) == ["AEW", "AMW"]
+    assert by_scope["AEW"].commodity_code_overrides == {"FAK #1": "G0009"}
+    assert by_scope["AMW"].commodity_code_overrides == {"FAK #1": "G0008"}
+
+
+def test_re_folding_a_scope_replaces_only_that_scope():
+    profile = MappingProfile()
+    by_scope = _with_scope_overrides(profile, "AEW", {"commodity_code_overrides": {"FAK": "X"}}, None)
+    by_scope = _with_scope_overrides(profile, "AMW", {"commodity_code_overrides": {"FAK": "Y"}}, by_scope)
+
+    by_scope = _with_scope_overrides(profile, "AEW", {"commodity_code_overrides": {"FAK": "Z"}}, by_scope)
+
+    assert by_scope["AEW"].commodity_code_overrides == {"FAK": "Z"}
+    assert by_scope["AMW"].commodity_code_overrides == {"FAK": "Y"}
