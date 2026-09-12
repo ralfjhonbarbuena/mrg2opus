@@ -28,6 +28,9 @@ _ALL_SCOPES = "All scopes"
 # exactly when the widgets need clearing.
 _PENDING_PRESET = "pending_preset_profile"
 _IMPORT_ERROR = "preset_import_error"
+# A parsed preset that belongs to another lane, held back for the
+# "Import anyway" button rather than thrown away.
+_IMPORT_MISMATCH = "preset_import_mismatch"
 
 _EDITOR_KEY_BASE = "commodity_overrides_editor"
 _EDITOR_NONCE = "commodity_overrides_editor_nonce"
@@ -72,8 +75,34 @@ def reset_filing_settings(prefix: str) -> None:
     _refresh_editor(prefix)
 
 
-def _import_preset(prefix: str, upload_key: str) -> None:
-    """Stage an uploaded preset for the next run, and clear the widgets.
+def _stage_preset(prefix: str, profile: MappingProfile) -> None:
+    """Put a preset where the next run will pick it up, and clear the
+    widgets so it shows.
+
+    Both halves are needed. Replacing the profile alone changes nothing
+    on screen: Streamlit renders a keyed widget from its stored value, not
+    from the `value=` a caller passes, so the settings would keep showing
+    whatever was there while the returned profile said otherwise - the
+    same way the Refresh button did nothing until it changed the grid's
+    key rather than its contents.
+    """
+    st.session_state[prefix + _PENDING_PRESET] = profile
+    st.session_state.pop(prefix + _IMPORT_ERROR, None)
+    st.session_state.pop(prefix + _IMPORT_MISMATCH, None)
+    # Clears the uploader along with everything else, so the file doesn't
+    # sit there afterwards looking like it still needs importing.
+    reset_filing_settings(prefix)
+
+
+def _import_anyway(prefix: str) -> None:
+    """Take the other lane's preset that _import_preset held back."""
+    held = st.session_state.get(prefix + _IMPORT_MISMATCH)
+    if held is not None:
+        _stage_preset(prefix, held)
+
+
+def _import_preset(prefix: str, upload_key: str, lane_id: str | None = None) -> None:
+    """Read an uploaded preset, check it belongs here, and stage it.
 
     Both halves are needed. Replacing the profile alone changes nothing
     on screen: Streamlit renders a keyed widget from its stored value, not
@@ -85,6 +114,16 @@ def _import_preset(prefix: str, upload_key: str) -> None:
     Runs as a button's callback rather than on the upload itself, so
     dropping a file never silently overwrites settings someone is partway
     through entering.
+
+    A preset from another lane is REFUSED rather than applied, because
+    the wrong lane is not the harmless case it looks like. Every commodity
+    setting is keyed by a group's default description, and those repeat
+    across lanes - "FAK" is a group in EAF and in all three TAD lanes - so
+    the other lane's overrides land on a group that merely shares a name,
+    silently renaming and recoding it. It is held for "Import anyway"
+    rather than discarded: some of what a preset carries (the RFA dates,
+    the excluded charge codes) is lane-agnostic and worth reusing on
+    purpose.
     """
     uploaded = st.session_state.get(upload_key)
     if uploaded is None:
@@ -96,15 +135,24 @@ def _import_preset(prefix: str, upload_key: str) -> None:
         st.session_state[prefix + _IMPORT_ERROR] = (
             f"{uploaded.name} isn't a settings file this can read. ({type(exc).__name__})"
         )
+        st.session_state.pop(prefix + _IMPORT_MISMATCH, None)
         return
-    st.session_state.pop(prefix + _IMPORT_ERROR, None)
-    st.session_state[prefix + _PENDING_PRESET] = profile
-    # Clears the uploader along with everything else, so the file doesn't
-    # sit there afterwards looking like it still needs importing.
-    reset_filing_settings(prefix)
+
+    # A file with no lane predates the stamp, or was built before a lane
+    # was picked. Nothing to check it against, so it goes through.
+    if profile.lane_id and lane_id and profile.lane_id != lane_id:
+        st.session_state[prefix + _IMPORT_MISMATCH] = profile
+        st.session_state[prefix + _IMPORT_ERROR] = (
+            f"These settings were made for **{profile.lane_id}**, and this filing is **{lane_id}**. "
+            "Commodity groups are matched by description, and the same description turns up in more "
+            "than one lane - so importing this would rename and recode whichever group happens to "
+            "share a name."
+        )
+        return
+    _stage_preset(prefix, profile)
 
 
-def _render_presets(profile: MappingProfile, key_prefix: str) -> None:
+def _render_presets(profile: MappingProfile, key_prefix: str, lane_id: str | None = None) -> None:
     """Export the whole settings sheet as a file, or import one back.
 
     A file rather than a named folder entry, so the settings travel with
@@ -118,6 +166,9 @@ def _render_presets(profile: MappingProfile, key_prefix: str) -> None:
     open from the top of the page and filled at the bottom. Exporting what
     was applied rather than what is on screen would quietly write a
     different sheet than the one being looked at.
+
+    The file is stamped with the lane it was made for, and importing one
+    from another lane is refused - see _import_preset.
     """
     with st.expander("Export / import these settings"):
         col_export, col_import = st.columns(2)
@@ -128,23 +179,34 @@ def _render_presets(profile: MappingProfile, key_prefix: str) -> None:
             )
             st.download_button(
                 "Export settings",
-                data=export_profile(profile.model_copy(update={"name": name})),
+                data=export_profile(profile.model_copy(update={"name": name, "lane_id": lane_id})),
                 file_name=preset_filename(name),
                 mime="application/json",
                 key=f"{key_prefix}_preset_export",
                 help="Everything on this page, as one file you can keep, send on, or import later.",
             )
+            if lane_id:
+                st.caption(f"Stamped **{lane_id}** — it will refuse to import into another lane.")
         with col_import:
             st.markdown("**Import**")
             upload_key = f"{key_prefix}_preset_import"
             st.file_uploader("A settings file (.json)", type=["json"], key=upload_key)
             st.button(
                 "Import settings", key=f"{key_prefix}_preset_import_go",
-                on_click=_import_preset, args=(key_prefix, upload_key),
+                on_click=_import_preset, args=(key_prefix, upload_key, lane_id),
                 help="Replaces every setting below with the file's own.",
             )
             if (problem := st.session_state.get(key_prefix + _IMPORT_ERROR)):
                 st.error(problem)
+            # Only offered once a mismatch has been refused, so the guard
+            # can't be walked past without reading what it said.
+            if st.session_state.get(key_prefix + _IMPORT_MISMATCH) is not None:
+                st.button(
+                    "Import anyway", key=f"{key_prefix}_preset_import_force",
+                    on_click=_import_anyway, args=(key_prefix,),
+                    help="Use it regardless - worth it for the dates and charge codes, which are "
+                         "the same whatever the lane. Check the commodity table afterwards.",
+                )
 
 
 def _with_scope_overrides(
@@ -544,6 +606,7 @@ def render_filing_settings(
         # so a later change to the shared setting would silently stop
         # reaching this scope.
         scoped = profile.model_copy(update={
+            "lane_id": lane_id,
             "by_scope": _with_scope_overrides(profile, editing_scope, commodity_settings),
             "excluded_charge_codes": excluded_charge_codes,
             "rfa_effective_date": rfa_effective_date,
@@ -555,11 +618,12 @@ def render_filing_settings(
             "tad_d7_addon": tad_d7_addon,
         })
         with preset_slot:
-            _render_presets(scoped, key_prefix)
+            _render_presets(scoped, key_prefix, lane_id)
         return scoped
 
     built = profile.model_copy(
         update={
+            "lane_id": lane_id,
             **commodity_settings,
             "excluded_charge_codes": excluded_charge_codes,
             "rfa_effective_date": rfa_effective_date,
@@ -572,5 +636,5 @@ def render_filing_settings(
         }
     )
     with preset_slot:
-        _render_presets(built, key_prefix)
+        _render_presets(built, key_prefix, lane_id)
     return built

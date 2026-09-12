@@ -129,3 +129,86 @@ def test_a_settings_file_is_named_after_the_settings():
     assert preset_filename("LAWC Tier 1") == "LAWC Tier 1.json"
     assert preset_filename("Weird/Name:*?") == "WeirdName.json"
     assert preset_filename("///") == "settings.json"
+
+
+def _staged(prefix):
+    return st.session_state.get(prefix + filing_settings._PENDING_PRESET)
+
+
+def _clear(prefix):
+    for suffix in (filing_settings._PENDING_PRESET, filing_settings._IMPORT_ERROR,
+                   filing_settings._IMPORT_MISMATCH):
+        st.session_state.pop(prefix + suffix, None)
+
+
+def _import_for(prefix, upload, lane_id):
+    key = f"{prefix}_preset_import"
+    st.session_state[key] = upload
+    filing_settings._import_preset(prefix, key, lane_id)
+
+
+def _file_for(lane_id):
+    return _Upload(
+        f"{lane_id}.json",
+        export_profile(MappingProfile(name=lane_id, lane_id=lane_id,
+                                      commodity_code_overrides={"FAK": "WRONG"})).encode(),
+    )
+
+
+def test_a_preset_from_another_lane_is_refused():
+    """Not the harmless case it looks like: every commodity setting is
+    keyed by a group's default description, and "FAK" is a group in EAF
+    and in all three TAD lanes - so the wrong lane's overrides don't fail
+    to apply, they rename and recode a group that shares a name."""
+    _clear("convert")
+
+    _import_for("convert", _file_for("TAD-OEW-OMW"), "EAF")
+
+    assert _staged("convert") is None
+    problem = st.session_state["convert" + filing_settings._IMPORT_ERROR]
+    assert "TAD-OEW-OMW" in problem and "EAF" in problem
+
+
+def test_the_refused_preset_is_kept_for_import_anyway():
+    """Some of what a preset carries - the RFA dates, the excluded charge
+    codes - is the same whatever the lane, so the file is held rather
+    than thrown away."""
+    _clear("convert")
+    _import_for("convert", _file_for("TAD-OEW-OMW"), "EAF")
+
+    filing_settings._import_anyway("convert")
+
+    assert _staged("convert").commodity_code_overrides == {"FAK": "WRONG"}
+    assert "convert" + filing_settings._IMPORT_MISMATCH not in st.session_state
+
+
+def test_a_preset_for_this_lane_imports_without_comment():
+    _clear("convert")
+
+    _import_for("convert", _file_for("EAF"), "EAF")
+
+    assert _staged("convert").lane_id == "EAF"
+    assert "convert" + filing_settings._IMPORT_ERROR not in st.session_state
+
+
+def test_a_preset_with_no_lane_still_imports():
+    """Files written before the stamp existed, and any built with no lane
+    picked. There is nothing to check them against, so they go through."""
+    _clear("convert")
+    unstamped = _Upload("old.json", export_profile(MappingProfile(name="old")).encode())
+
+    _import_for("convert", unstamped, "EAF")
+
+    assert _staged("convert") is not None
+    assert "convert" + filing_settings._IMPORT_ERROR not in st.session_state
+
+
+def test_a_bad_file_does_not_leave_a_stale_mismatch_behind():
+    """Otherwise "Import anyway" would still be offered, and would stage
+    the file from the previous attempt."""
+    _clear("convert")
+    _import_for("convert", _file_for("TAD-OEW-OMW"), "EAF")
+
+    _import_for("convert", _Upload("junk.json", b"{not json"), "EAF")
+
+    assert "convert" + filing_settings._IMPORT_MISMATCH not in st.session_state

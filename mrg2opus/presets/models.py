@@ -42,6 +42,15 @@ class MappingProfile(BaseModel):
     name: str = "default"
     created_by: Optional[str] = None
     updated_at: Optional[str] = None
+    # The lane these settings were built against, stamped on the way out
+    # so an exported file can say what it is for. Every commodity setting
+    # is keyed by a group's DEFAULT DESCRIPTION, and those are not unique
+    # across lanes - "FAK" is a group in EAF and in all three TAD lanes -
+    # so a preset from the wrong lane doesn't fail to apply, it applies to
+    # the wrong group. None means a file written before this existed, or
+    # one built with no lane selected; it imports without complaint
+    # because there is nothing to check it against.
+    lane_id: Optional[str] = None
 
     # All three commodity_*_overrides dicts below are keyed by the SAME
     # thing: a commodity group's DEFAULT (override-free) description - not
