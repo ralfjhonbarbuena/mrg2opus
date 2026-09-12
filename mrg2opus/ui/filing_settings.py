@@ -16,9 +16,16 @@ from decimal import Decimal
 import streamlit as st
 
 from mrg2opus.presets.models import MappingProfile, ScopeOverrides
+from mrg2opus.presets.store import list_presets, load_preset, save_preset
 
 # The scope picker's "not one scope, the shared settings" option.
 _ALL_SCOPES = "All scopes"
+
+# Where a just-loaded preset waits for the next run to pick it up. Named
+# without the "<prefix>_" shape on purpose: reset_filing_settings() wipes
+# every key with that prefix, and this one has to survive it - loading a
+# preset is exactly when the widgets need clearing.
+_PENDING_PRESET = "pending_preset_profile"
 
 _EDITOR_KEY_BASE = "commodity_overrides_editor"
 _EDITOR_NONCE = "commodity_overrides_editor_nonce"
@@ -61,6 +68,51 @@ def reset_filing_settings(prefix: str) -> None:
     for key in [k for k in st.session_state if k.startswith(prefix + "_")]:
         del st.session_state[key]
     _refresh_editor(prefix)
+
+
+def _load_preset_into(prefix: str, name: str) -> None:
+    """Stage a preset for the next run, and clear the widgets so it shows.
+
+    Both halves are needed. Replacing the profile alone changes nothing
+    on screen: Streamlit renders a keyed widget from its stored value, not
+    from the `value=` a caller passes, so the settings would keep showing
+    whatever was there while the returned profile said otherwise - the
+    same way the Refresh button did nothing until it changed the grid's
+    key rather than its contents.
+    """
+    st.session_state[prefix + _PENDING_PRESET] = load_preset(name)
+    reset_filing_settings(prefix)
+
+
+def _render_presets(profile: MappingProfile, key_prefix: str) -> None:
+    """Save or load the whole settings sheet under a name.
+
+    Takes the profile the settings CURRENTLY describe, not the one last
+    applied - which is why the caller renders this into a container held
+    open from the top of the page and filled at the bottom. Saving what
+    was applied rather than what is on screen would quietly write a
+    different sheet than the one being looked at.
+    """
+    with st.expander("Load / save a named preset"):
+        existing = list_presets()
+        col_load, col_save = st.columns(2)
+        with col_load:
+            if existing:
+                pick = st.selectbox("Existing presets", options=existing, key=f"{key_prefix}_preset_pick")
+                st.button(
+                    "Load preset", key=f"{key_prefix}_preset_load",
+                    on_click=_load_preset_into, args=(key_prefix, pick),
+                    help="Replaces every setting below with the preset's own.",
+                )
+            else:
+                st.caption("No saved presets yet.")
+        with col_save:
+            name = st.text_input(
+                "Save current settings as", value=profile.name, key=f"{key_prefix}_preset_name"
+            )
+            if st.button("Save preset", key=f"{key_prefix}_preset_save"):
+                path = save_preset(profile.model_copy(update={"name": name}))
+                st.success(f"Saved to {path.name}.")
 
 
 def _with_scope_overrides(
@@ -115,6 +167,15 @@ def render_filing_settings(
     effect: Convert holds it until "Apply & Continue", Compare adopts it
     straight away and re-checks on "Run Comparison".
     """
+    # A preset loaded on the previous run replaces the caller's profile
+    # for this one, and is handed back so the caller adopts it too.
+    pending = st.session_state.pop(key_prefix + _PENDING_PRESET, None)
+    if pending is not None:
+        profile = pending
+    # Held open here and filled at the very bottom, so the preset panel
+    # sits above the settings while saving what they currently say.
+    preset_slot = st.container()
+
     st.markdown("#### Commodity groups")
     # Which scope these settings are for. "All scopes" edits the
     # filing-wide values; picking one edits only what that scope answers
@@ -450,7 +511,7 @@ def render_filing_settings(
         # equal to the filing-wide answer would freeze that group here,
         # so a later change to the shared setting would silently stop
         # reaching this scope.
-        return profile.model_copy(update={
+        scoped = profile.model_copy(update={
             "by_scope": _with_scope_overrides(profile, editing_scope, commodity_settings),
             "excluded_charge_codes": excluded_charge_codes,
             "rfa_effective_date": rfa_effective_date,
@@ -461,8 +522,11 @@ def render_filing_settings(
             "include_tad_d7": include_tad_d7,
             "tad_d7_addon": tad_d7_addon,
         })
+        with preset_slot:
+            _render_presets(scoped, key_prefix)
+        return scoped
 
-    return profile.model_copy(
+    built = profile.model_copy(
         update={
             **commodity_settings,
             "excluded_charge_codes": excluded_charge_codes,
@@ -475,3 +539,6 @@ def render_filing_settings(
             "tad_d7_addon": tad_d7_addon,
         }
     )
+    with preset_slot:
+        _render_presets(built, key_prefix)
+    return built

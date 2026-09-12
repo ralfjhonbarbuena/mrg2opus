@@ -3,7 +3,6 @@ from __future__ import annotations
 import streamlit as st
 
 from mrg2opus.parsers.registry import get_profile
-from mrg2opus.presets.store import list_presets, load_preset, save_preset
 from mrg2opus.ui.filing_settings import render_filing_settings
 from mrg2opus.ui.parsing import run_parser
 from mrg2opus.ui.sheets import output_sheets
@@ -20,25 +19,16 @@ def render(state: WizardState) -> None:
             st.rerun()
         return
 
-    with st.expander("Load / save a named preset"):
-        existing = list_presets()
-        col_load, col_save = st.columns(2)
-        with col_load:
-            if existing:
-                pick = st.selectbox("Existing presets", options=existing)
-                if st.button("Load preset"):
-                    state.profile = load_preset(pick)
-                    st.success(f"Loaded preset '{pick}'.")
-                    st.rerun()
-            else:
-                st.caption("No saved presets yet.")
-        with col_save:
-            name = st.text_input("Save current settings as", value=state.profile.name)
-            if st.button("Save preset"):
-                path = save_preset(state.profile.model_copy(update={"name": name}))
-                st.success(f"Saved to {path.name}.")
-
-    # The settings themselves live in ui/filing_settings.py, because
+    # Presets live with the settings they save (ui/filing_settings.py),
+    # so Compare has them too and neither screen's copy can drift.
+    #
+    # The old copy here had both halves of this wrong, invisibly: Load
+    # replaced state.profile without clearing the widgets, which render
+    # from their own stored values, so nothing on screen changed; and
+    # Save wrote state.profile, the LAST APPLIED settings, rather than
+    # the ones being looked at.
+    #
+    # The settings themselves live there because
     # Compare needs the identical editor - the auditor drafts the filing
     # independently rather than inheriting this one.
     pending_profile = render_filing_settings(
