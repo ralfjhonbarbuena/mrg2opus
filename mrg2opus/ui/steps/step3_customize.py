@@ -32,8 +32,8 @@ def render(state: WizardState) -> None:
     # Compare needs the identical editor - the auditor drafts the filing
     # independently rather than inheriting this one.
     pending_profile = render_filing_settings(
-        state.profile, state.default_commodity_groups, state.commodity_groups_by_scope,
-        state.dg_twin_groups, state.reefer_nor_groups, list(state.row_sets),
+        state.profile, state.commodity_blocks, state.dg_twin_groups,
+        state.reefer_nor_groups, list(state.row_sets),
         state.selected_lane_id, key_prefix="convert",
     )
 

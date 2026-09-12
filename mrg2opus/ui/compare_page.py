@@ -58,7 +58,7 @@ from mrg2opus.presets.models import MappingProfile
 from mrg2opus.schema import opus_columns as cols
 from mrg2opus.ui.commodity_utils import (
     assign_sequential_default_codes,
-    commodity_groups_by_scope,
+    commodity_blocks,
     dg_twin_probe,
     distinct_commodity_groups,
     groups_offering_dg_twins,
@@ -95,7 +95,7 @@ class CompareState:
     # The parser's own (code, description) pairs, snapshotted from a
     # first override-free parse - what the settings editor lists.
     default_commodity_groups: list[tuple[str, str]] = field(default_factory=list)
-    commodity_groups_by_scope: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
+    commodity_blocks: list = field(default_factory=list)
     # Which of those get a DG twin - see WizardState.dg_twin_groups.
     dg_twin_groups: frozenset[str] = frozenset()
     reefer_nor_groups: frozenset[str] = frozenset()
@@ -878,7 +878,7 @@ def render() -> None:
             probe = dg_twin_probe(MappingProfile())
             base_rows = run_parser(parser_cls(), state.workbook, probe)
         state.default_commodity_groups = distinct_commodity_groups(base_rows)
-        state.commodity_groups_by_scope = commodity_groups_by_scope(base_rows)
+        state.commodity_blocks = commodity_blocks(base_rows)
         state.dg_twin_groups = groups_offering_dg_twins(probe)
         state.reefer_nor_groups = reefer_and_nor_groups(base_rows)
         state.scopes = list(base_rows)
@@ -896,9 +896,8 @@ def render() -> None:
             "Differences they cause are reported separately, as presentation rather than substance."
         )
         state.profile = render_filing_settings(
-            state.profile, state.default_commodity_groups, state.commodity_groups_by_scope,
-            state.dg_twin_groups, state.reefer_nor_groups, state.scopes,
-            selected, key_prefix="compare",
+            state.profile, state.commodity_blocks, state.dg_twin_groups,
+            state.reefer_nor_groups, state.scopes, selected, key_prefix="compare",
         )
 
     state.skip_sheets = st.multiselect(

@@ -34,6 +34,7 @@ from openpyxl.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 from mrg2opus.parsers.base import BaseMRGParser, RawExtraction
+from mrg2opus.parsers.common.blocks import resolve_for_block
 from mrg2opus.parsers.common.commodity import resolve_commodity_code, resolve_commodity_description
 from mrg2opus.parsers.common.exclusion import is_excluded
 from mrg2opus.parsers.common.tad_snapshots import find_snapshot_sheets, merge_dated_snapshots
@@ -190,8 +191,6 @@ class TADWmwWewParser(BaseMRGParser):
         return RawExtraction(tables={"scopes": scopes})
 
     def _build_one_scope(self, data: ScopeData, config: MappingProfile) -> OpusRowSet:
-        description = resolve_commodity_description(DEFAULT_COMMODITY_DESCRIPTION, config)
-        code = resolve_commodity_code(DEFAULT_COMMODITY_DESCRIPTION, DEFAULT_COMMODITY_CODE, config)
         excluded_codes = frozenset(config.excluded_charge_codes)
 
         # CMDT NOTE grouping is data-driven (DATA's own per-row validity
@@ -203,7 +202,31 @@ class TADWmwWewParser(BaseMRGParser):
             if key not in group_rows:
                 group_order.append(key)
             group_rows[key].append(row)
-        cmdt_seq_by_key = {key: i + 1 for i, key in enumerate(group_order)}
+        _base_seq_by_key = {key: i + 1 for i, key in enumerate(group_order)}
+        # One commodity name, several blocks - so the settings are read
+        # per block rather than once for the scope. TAD groups rows by
+        # their own validity window and Include Surcharge list, and a
+        # September AEW filing has four blocks under the single name
+        # "FAK": two snapshots crossed with two surcharge lists. Keyed by
+        # description alone they would share one code, one name and one
+        # skip; see parsers/common/blocks.py for the "FAK #2" key that
+        # separates them, and for why a setting made for the whole group
+        # still reaches all of them.
+        block_count = len(group_order)
+
+        def _identity(key: tuple) -> tuple[str, str, int]:
+            seq = _base_seq_by_key[key]
+            return (
+                resolve_for_block(config.commodity_code_overrides, DEFAULT_COMMODITY_DESCRIPTION, seq, block_count, DEFAULT_COMMODITY_CODE),
+                resolve_for_block(config.commodity_description_overrides, DEFAULT_COMMODITY_DESCRIPTION, seq, block_count, DEFAULT_COMMODITY_DESCRIPTION),
+                resolve_for_block(config.commodity_sequence_overrides, DEFAULT_COMMODITY_DESCRIPTION, seq, block_count, seq),
+            )
+
+        # The FINAL sequence number, which everything downstream keys on -
+        # the notes, the route notes and the Route Seq counter all follow
+        # a block renumbered here.
+        cmdt_seq_by_key = {key: _identity(key)[2] for key in group_order}
+        identity_by_key = {key: _identity(key)[:2] for key in group_order}
 
         rates: list[RatesRow] = []
         for row in data.rows:
@@ -215,8 +238,8 @@ class TADWmwWewParser(BaseMRGParser):
             rates.append(
                 RatesRow(
                     cmdt_seq=cmdt_seq_by_key[key],
-                    commodity_group_code=code,
-                    commodity_group_description=description,
+                    commodity_group_code=identity_by_key[key][0],
+                    commodity_group_description=identity_by_key[key][1],
                     origin_code=row.origin_code,
                     origin_description=row.origin_description,
                     origin_term=row.origin_term,
@@ -262,6 +285,7 @@ class TADWmwWewParser(BaseMRGParser):
             notes = self._build_cmdt_notes(validity_start, validity_end, list(codes), excluded_codes, config)
             for note in notes:
                 note.header_seq = seq
+                note.group_description = identity_by_key[key][1]
             cmdt_notes.extend(notes)
             note_text_by_seq[seq] = notes[0].contents if notes else None
 

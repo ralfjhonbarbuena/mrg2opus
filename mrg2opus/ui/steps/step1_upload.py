@@ -46,7 +46,7 @@ def render(state: WizardState) -> None:
         reset_filing_settings("convert")
         state.row_sets = None
         state.default_commodity_groups = []
-        state.commodity_groups_by_scope = {}
+        state.commodity_blocks = []
         state.dg_twin_groups = frozenset()
         state.reefer_nor_groups = frozenset()
         state.output_bytes = None

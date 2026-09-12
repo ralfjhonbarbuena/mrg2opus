@@ -40,8 +40,10 @@ class WizardState:
     # re-run reflects the OVERRIDDEN codes, which would make a second
     # round of edits key against the wrong dict).
     default_commodity_groups: list[tuple[str, str]] = field(default_factory=list)
-    # The same, per sub-lane, for the settings' scope picker.
-    commodity_groups_by_scope: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
+    # Every CMDT NOTE block from that same parse - one settings row
+    # each, and what the scope picker filters. A block is usually a
+    # commodity group; TAD files several under one name.
+    commodity_blocks: list = field(default_factory=list)
     # Which of those actually get a DG twin, so the settings only offer
     # to drop one where there is one to drop (LAWC's OOG never has one).
     dg_twin_groups: frozenset[str] = frozenset()

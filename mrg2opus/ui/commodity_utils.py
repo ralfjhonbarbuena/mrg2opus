@@ -5,6 +5,9 @@ a "private" helper from the other.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+from mrg2opus.parsers.common.blocks import block_key
 from mrg2opus.presets.models import MappingProfile
 
 
@@ -29,17 +32,6 @@ def distinct_commodity_groups(row_sets: dict) -> list[tuple[str, str]]:
         for row in row_set.rates:
             seen.setdefault(row.commodity_group_description, row.commodity_group_code)
     return [(code, description) for description, code in seen.items()]
-
-
-def commodity_groups_by_scope(row_sets: dict) -> dict[str, list[tuple[str, str]]]:
-    """distinct_commodity_groups(), asked one sub-lane at a time.
-
-    A lane with sub-lanes files each as its own OPUS workbook and can
-    answer the commodity settings differently per scope, so the editor
-    needs to know which groups each scope actually has - two of TAD
-    AEW/AMW's four share one group and the other two share another.
-    """
-    return {scope: distinct_commodity_groups({scope: rs}) for scope, rs in row_sets.items()}
 
 
 def assign_sequential_default_codes(groups: list[tuple[str, str]]) -> dict[str, str]:
@@ -107,3 +99,108 @@ def groups_offering_dg_twins(probe: MappingProfile) -> frozenset[str]:
     DG duplicate is one lane-wide flag rather than a per-group dict."""
     asked = getattr(probe.skip_dg_generation, "asked", frozenset())
     return frozenset(asked)
+
+
+@dataclass(frozen=True)
+class CommodityBlock:
+    """One CMDT NOTE block, which is the unit the settings actually act on.
+
+    Usually the same thing as a commodity group - LAWC, LAEC, CSE and the
+    rest file one block per group, so `key` is just the description and
+    nothing about their settings changes. TAD groups its rows by their own
+    validity window and Include Surcharge list instead, so one name covers
+    several blocks; `key` then names the block ("FAK #2") and `label`
+    says what makes it different, which is the only way to tell four rows
+    called FAK apart on screen.
+    """
+
+    key: str
+    code: str
+    description: str
+    cmdt_seq: object
+    scope: str
+    validity_start: object = None
+    validity_end: object = None
+    charge_codes: tuple[str, ...] = ()
+    rows: int = 0
+
+    @property
+    def label(self) -> str:
+        """The dates and surcharges that distinguish this block, as one
+        cell. Empty for a group that is a single block, where there is
+        nothing to distinguish it from."""
+        if self.key == self.description:
+            return ""
+        window = _window(self.validity_start, self.validity_end)
+        codes = ", ".join(self.charge_codes)
+        return " · ".join(part for part in (window, codes) if part)
+
+
+def _window(start, end) -> str:
+    def fmt(d):
+        return d.strftime("%d %b") if hasattr(d, "strftime") else ""
+    if not start and not end:
+        return ""
+    return f"{fmt(start) or '?'} – {fmt(end) or '?'}"
+
+
+def _blocks_of(row_set) -> dict[object, dict]:
+    """{header_seq: its dates and charge codes}, off the generated CMDT
+    NOTE rows - the only place a block states either."""
+    out: dict[object, dict] = {}
+    current = None
+    for note in row_set.cmdt_notes:
+        if note.header_seq is not None:
+            current = note.header_seq
+            out.setdefault(current, {
+                "start": note.application_effective, "end": note.application_expires, "codes": [],
+            })
+        code = getattr(note, "code", None)
+        if code and code != "APP" and current in out:
+            out[current]["codes"].append(code)
+    return out
+
+
+def commodity_blocks(row_sets: dict) -> list[CommodityBlock]:
+    """Every commodity block in a parse, in first-encounter order.
+
+    Called on the FIRST (override-free) parse, like
+    distinct_commodity_groups(), so each description and sequence here is
+    the parser's own - the identity every override dict keys by.
+    """
+    counts: dict[tuple[str, str], int] = {}
+    for scope, row_set in row_sets.items():
+        for row in row_set.rates:
+            counts.setdefault((scope, row.commodity_group_description), 0)
+        seqs: dict[str, set] = {}
+        for row in row_set.rates:
+            seqs.setdefault(row.commodity_group_description, set()).add(row.cmdt_seq)
+        for desc, s in seqs.items():
+            counts[(scope, desc)] = len(s)
+
+    out: list[CommodityBlock] = []
+    # Per SCOPE, not globally: two sub-lanes each number their blocks from
+    # 1, so TAD-WMW-WEW's WEW #1 and WMW #1 are different blocks under the
+    # same key. Deduping across scopes dropped every WMW block whose
+    # number WEW had already used - three of its four.
+    seen: set[tuple[str, str]] = set()
+    for scope, row_set in row_sets.items():
+        notes = _blocks_of(row_set)
+        tally: dict[tuple, int] = {}
+        for row in row_set.rates:
+            tally[(row.commodity_group_description, row.cmdt_seq)] = (
+                tally.get((row.commodity_group_description, row.cmdt_seq), 0) + 1
+            )
+        for row in row_set.rates:
+            desc, seq = row.commodity_group_description, row.cmdt_seq
+            key = block_key(desc, seq, counts.get((scope, desc), 1))
+            if (scope, key) in seen:
+                continue
+            seen.add((scope, key))
+            note = notes.get(seq, {})
+            out.append(CommodityBlock(
+                key=key, code=row.commodity_group_code, description=desc, cmdt_seq=seq, scope=scope,
+                validity_start=note.get("start"), validity_end=note.get("end"),
+                charge_codes=tuple(note.get("codes", ())), rows=tally[(desc, seq)],
+            ))
+    return out

@@ -11,6 +11,7 @@ import pytest
 from mrg2opus.audit.compare import _normalize, diff_by_key, rates_row_key, read_arbs_sheet, read_rates_sheet
 from mrg2opus.excel_io.merge import merge_workbooks
 from mrg2opus.parsers.tad_aew_amw import DEFAULT_JP_DESCRIPTION, TADAewAmwParser
+from mrg2opus.pipeline import run_parser
 from mrg2opus.presets.models import MappingProfile, ScopeOverrides
 from mrg2opus.schema import opus_columns as cols
 
@@ -531,3 +532,40 @@ def test_the_two_japan_scopes_can_file_one_group_under_their_own_codes():
 
     # The other two scopes are untouched by a setting that named neither.
     assert {r.commodity_group_code for r in row_sets["AEW"].rates} == {"G0001"}
+
+
+def test_each_commodity_block_can_be_set_separately():
+    """This filing puts four blocks under the one name "FAK" - two
+    snapshots crossed with two surcharge lists - and every commodity
+    setting is keyed by description, so all four shared one code, one
+    name and one skip. Keyed per block they come apart."""
+    row_sets = TADAewAmwParser().run_multi(_load_merged_workbook(), MappingProfile(
+        commodity_code_overrides={"FAK": "G0001", "FAK #2": "G0002"},
+        commodity_description_overrides={"FAK #2": "FAK - no LSF"},
+    ))
+
+    by_seq = {
+        r.cmdt_seq: (r.commodity_group_code, r.commodity_group_description)
+        for r in row_sets["AEW"].rates
+    }
+    assert by_seq[2] == ("G0002", "FAK - no LSF")
+    assert by_seq[1] == by_seq[3] == by_seq[4] == ("G0001", "FAK")
+
+
+def test_skipping_one_block_leaves_the_rest_of_its_group():
+    row_sets = run_parser(
+        TADAewAmwParser(), _load_merged_workbook(),
+        MappingProfile(skip_commodity_filing={"FAK #2": True}),
+    )
+
+    assert {r.cmdt_seq for r in row_sets["AEW"].rates} == {1, 3, 4}
+    assert 2 not in {n.header_seq for n in row_sets["AEW"].cmdt_notes if n.header_seq}
+
+
+def test_a_setting_made_for_the_whole_group_still_reaches_every_block():
+    """What keeps a preset written before blocks were separable working."""
+    row_sets = TADAewAmwParser().run_multi(_load_merged_workbook(), MappingProfile(
+        commodity_description_overrides={"FAK": "FAK - renamed"},
+    ))
+
+    assert {r.commodity_group_description for r in row_sets["AEW"].rates} == {"FAK - renamed"}

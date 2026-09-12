@@ -8,7 +8,7 @@ from mrg2opus.parsers.registry import get_profile
 from mrg2opus.presets.models import MappingProfile
 from mrg2opus.ui.commodity_utils import (
     assign_sequential_default_codes,
-    commodity_groups_by_scope,
+    commodity_blocks,
     dg_twin_probe,
     distinct_commodity_groups,
     groups_offering_dg_twins,
@@ -65,7 +65,7 @@ def render(state: WizardState) -> None:
             # from this FIRST parse, before Step 3 applies any overrides -
             # see WizardState.default_commodity_groups.
             state.default_commodity_groups = distinct_commodity_groups(state.row_sets)
-            state.commodity_groups_by_scope = commodity_groups_by_scope(state.row_sets)
+            state.commodity_blocks = commodity_blocks(state.row_sets)
             state.dg_twin_groups = groups_offering_dg_twins(probe)
             state.reefer_nor_groups = reefer_and_nor_groups(state.row_sets)
 
@@ -102,7 +102,7 @@ def render(state: WizardState) -> None:
         reset_filing_settings("convert")
         state.row_sets = None
         state.default_commodity_groups = []
-        state.commodity_groups_by_scope = {}
+        state.commodity_blocks = []
         state.dg_twin_groups = frozenset()
         state.reefer_nor_groups = frozenset()
         state.output_bytes = None

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Callable, TypeVar
 
+from mrg2opus.parsers.common.blocks import describes_block
 from mrg2opus.schema.opus_rows import OpusRowSet, RatesRow
 
 
@@ -68,6 +69,12 @@ def drop_commodity_groups(row_set: OpusRowSet, skipped: set[str]) -> OpusRowSet:
     commodity_group_description of their own and use the internal
     group_description bookkeeping field instead (see CmdtNoteRow).
 
+    A skip can also name one BLOCK of a group rather than the whole group
+    ("FAK #2" - see parsers/common/blocks.py), which is how TAD's several
+    blocks under one commodity name are skipped separately. Matching
+    therefore asks whether any skip describes the row, not whether the
+    row's description is in the set.
+
     Sequence numbers are deliberately NOT compacted afterwards - see
     MappingProfile.skip_commodity_filing."""
     if not skipped:
@@ -76,11 +83,16 @@ def drop_commodity_groups(row_set: OpusRowSet, skipped: set[str]) -> OpusRowSet:
     def pp_key(row):
         return row.source_group if row.source_group is not None else row.commodity_group_description
 
+    def dropped(description: str, cmdt_seq) -> bool:
+        return any(describes_block(key, description, cmdt_seq) for key in skipped)
+
     return row_set.model_copy(
         update={
-            "rates": [r for r in row_set.rates if r.commodity_group_description not in skipped],
-            "rates_port_port": [r for r in row_set.rates_port_port if pp_key(r) not in skipped],
-            "cmdt_notes": [n for n in row_set.cmdt_notes if (n.group_description or "") not in skipped],
+            "rates": [r for r in row_set.rates if not dropped(r.commodity_group_description, r.cmdt_seq)],
+            "rates_port_port": [r for r in row_set.rates_port_port if not dropped(pp_key(r), r.cmdt_seq)],
+            "cmdt_notes": [
+                n for n in row_set.cmdt_notes if not dropped(n.group_description or "", n.header_seq)
+            ],
         }
     )
 

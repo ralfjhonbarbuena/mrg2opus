@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from mrg2opus.pipeline import run_parser
 from mrg2opus.presets.models import MappingProfile, ScopeOverrides
-from mrg2opus.ui.commodity_utils import commodity_groups_by_scope
+from mrg2opus.ui.commodity_utils import commodity_blocks
 from mrg2opus.ui.filing_settings import _with_scope_overrides
 from mrg2opus.schema.opus_rows import OpusRowSet, RatesRow
 
@@ -103,15 +103,18 @@ def test_a_scope_that_differs_in_nothing_is_dropped_entirely():
     assert "AMW" not in by_scope
 
 
-def test_commodity_groups_by_scope_splits_what_each_sub_lane_has():
+def test_commodity_blocks_carry_the_scope_they_belong_to():
+    """The settings' scope picker filters on this, and two sub-lanes both
+    number their blocks from 1 - so the scope is part of what makes a
+    block findable, not decoration."""
     row_sets = {
         "AEW": OpusRowSet(rates=[_row("G0001", "FAK")]),
         "JAPAN AEW": OpusRowSet(rates=[_row("G0011", "FAK - JAPAN")]),
     }
-    assert commodity_groups_by_scope(row_sets) == {
-        "AEW": [("G0001", "FAK")],
-        "JAPAN AEW": [("G0011", "FAK - JAPAN")],
-    }
+
+    blocks = commodity_blocks(row_sets)
+
+    assert [(b.scope, b.key) for b in blocks] == [("AEW", "FAK"), ("JAPAN AEW", "FAK - JAPAN")]
 
 
 class _StubParser:

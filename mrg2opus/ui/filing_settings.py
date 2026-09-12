@@ -16,6 +16,7 @@ from decimal import Decimal
 import streamlit as st
 
 from mrg2opus.presets.models import MappingProfile, ScopeOverrides
+from mrg2opus.ui.commodity_utils import CommodityBlock
 from mrg2opus.presets.store import export_profile, import_profile, preset_filename
 
 # The scope picker's "not one scope, the shared settings" option.
@@ -234,8 +235,7 @@ def _with_scope_overrides(
 
 def render_filing_settings(
     profile: MappingProfile,
-    groups: list[tuple[str, str]],
-    groups_by_scope: dict[str, list[tuple[str, str]]],
+    blocks: list[CommodityBlock],
     dg_twin_groups: frozenset[str],
     reefer_nor_groups: frozenset[str],
     scopes: list[str],
@@ -244,16 +244,18 @@ def render_filing_settings(
 ) -> MappingProfile:
     """Draw the settings and return the profile they describe.
 
-    `groups` is the parser's own (code, description) pairs from an
-    override-free parse - the identities every override dict is keyed by.
-    `dg_twin_groups` names the subset of those the lane files a DG twin
-    for by default (commodity_utils.groups_offering_dg_twins), and
+    `blocks` is every CMDT NOTE block from an override-free parse - one
+    per settings row, and the identity every override dict keys by. For
+    most lanes a block IS a commodity group; TAD files several under one
+    name, told apart by their dates and surcharges (see
+    parsers/common/blocks.py).
+    `dg_twin_groups` names the groups the lane files a DG twin for by
+    default (commodity_utils.groups_offering_dg_twins), and
     `reefer_nor_groups` the reefer and NOR groups, which can be asked for
     one whether or not the lane files it (parsers.common.dg_twins).
-    `scopes` is the parse's own sub-lane keys and `groups_by_scope` which
-    groups each of them has. A lane with sub-lanes files each as its own
-    OPUS workbook, so the commodity settings are asked per scope as well
-    as filing-wide - see the scope picker below and
+    `scopes` is the parse's own sub-lane keys. A lane with sub-lanes files
+    each as its own OPUS workbook, so the commodity settings are asked per
+    scope as well as filing-wide - see the scope picker below and
     MappingProfile.for_scope.
 
     Returns a NEW profile built from what is on screen rather than
@@ -291,9 +293,18 @@ def render_filing_settings(
     # What the grid shows: the filing-wide settings, or one scope's own
     # view of them (its overrides merged over the shared ones).
     view = profile if editing_scope is None else profile.for_scope(editing_scope)
+    # One row per block. Across scopes the same key means the same thing
+    # (a setting applies to every scope), so the list is deduped by key
+    # and the first occurrence supplies what is shown.
     if editing_scope is not None:
-        groups = groups_by_scope.get(editing_scope, [])
+        rows_for = [b for b in blocks if b.scope == editing_scope]
         st.caption(f"Editing **{editing_scope}** only. Blank cells here fall back to the All scopes value.")
+    else:
+        rows_for, by_key = [], set()
+        for block in blocks:
+            if block.key not in by_key:
+                by_key.add(block.key)
+                rows_for.append(block)
     st.caption(
         "Every column here is yours to change. **CMDT Code** is numbered G0001, G0002, ... in the order the "
         "groups were found - a placeholder, never a code read out of your file, since there is no commodity "
@@ -304,6 +315,13 @@ def render_filing_settings(
         "Leave **CMDT Seq** blank to let the tool number the group itself. **Skip Filing** leaves the group "
         "out of the filing entirely - to keep a group but drop only its DG rows, see Dangerous Goods below."
     )
+    if any(block.label for block in rows_for):
+        st.caption(
+            "This filing groups its rows by validity window and surcharge list rather than by sheet, so one "
+            "commodity name covers several blocks - each its own CMDT NOTE, its own sequence number, and its "
+            "own row here. **Dates & surcharges** is what tells them apart; it is read-only, because it "
+            "describes the rows rather than setting anything."
+        )
     if groups:
         existing_order = view.commodity_group_order
         # Every override dict is keyed by the group's DEFAULT description
@@ -316,13 +334,17 @@ def render_filing_settings(
         # by commodity_utils.assign_sequential_default_codes().
         editor_rows = [
             {
-                "order": (existing_order.index(desc) + 1) if desc in existing_order else len(existing_order) + i + 1,
-                "code": view.commodity_code_overrides.get(desc, code),
-                "description": view.commodity_description_overrides.get(desc, desc),
-                "override_cmdt_seq": view.commodity_sequence_overrides.get(desc),
-                "skip_filing": view.skip_commodity_filing.get(desc, False),
+                "order": (
+                    existing_order.index(block.key) + 1 if block.key in existing_order
+                    else len(existing_order) + i + 1
+                ),
+                "code": view.commodity_code_overrides.get(block.key, block.code),
+                "description": view.commodity_description_overrides.get(block.key, block.description),
+                "override_cmdt_seq": view.commodity_sequence_overrides.get(block.key),
+                "skip_filing": view.skip_commodity_filing.get(block.key, False),
+                "block": block.label,
             }
-            for i, (code, desc) in enumerate(groups)
+            for i, block in enumerate(rows_for)
         ]
         # The default description is the key every override is stored
         # under, but showing it beside the editable one is what made the
@@ -331,7 +353,7 @@ def render_filing_settings(
         # the edits come back - see the zip() below. Sorting both lists
         # the same way is what makes that safe; data_editor never adds,
         # deletes or moves rows (num_rows is "fixed" by default).
-        row_keys = [desc for _code, desc in groups]
+        row_keys = [block.key for block in rows_for]
         paired = sorted(zip(editor_rows, row_keys), key=lambda pair: pair[0]["order"])
         editor_rows = [row for row, _key in paired]
         row_keys = [key for _row, key in paired]
@@ -349,7 +371,7 @@ def render_filing_settings(
             editor_rows,
             hide_index=True,
             width="stretch",
-            column_order=["order", "override_cmdt_seq", "code", "description", "skip_filing"],
+            column_order=["order", "override_cmdt_seq", "code", "description", "block", "skip_filing"],
             column_config={
                 "order": st.column_config.NumberColumn(
                     "Order", step=1, required=True,
@@ -367,9 +389,14 @@ def render_filing_settings(
                     "CMDT Description", required=True,
                     help="Two groups given the same description merge into one CMDT NOTE block.",
                 ),
+                "block": st.column_config.TextColumn(
+                    "Dates & surcharges", disabled=True,
+                    help="What this block covers, and what tells it apart from the others sharing its "
+                         "name. Read-only - it describes the rows rather than setting anything.",
+                ),
                 "skip_filing": st.column_config.CheckboxColumn(
                     "Skip Filing",
-                    help="Leave this commodity group out of the filing altogether.",
+                    help="Leave this block out of the filing altogether.",
                 ),
             },
             key=_editor_key(key_prefix, editing_scope or ""),
@@ -430,7 +457,7 @@ def render_filing_settings(
     # duplicate by default and opts out, per commodity group.
     st.markdown("#### Dangerous Goods (DG)")
     is_tad_lane = bool(lane_id and lane_id.startswith("TAD-"))
-    group_descriptions = [desc for _code, desc in groups]
+    group_descriptions = [block.key for block in rows_for]
 
     tad_dg_by_scope = dict(profile.tad_dg_by_scope)
     if is_tad_lane:
@@ -483,7 +510,10 @@ def render_filing_settings(
     # do anything reads as a setting the tool ignored.
     skip_dg_choices: dict[str, bool] = {}
     if not is_tad_lane and generate_dg:
-        dg_able = [desc for _code, desc in groups if desc in dg_twin_groups or desc in reefer_nor_groups]
+        dg_able = [
+            b.key for b in rows_for
+            if b.description in dg_twin_groups or b.description in reefer_nor_groups
+        ]
         if dg_able:
             st.caption(
                 "Ticked groups get DG rows. Reefer and NOR groups start unticked unless this lane files "
@@ -501,7 +531,7 @@ def render_filing_settings(
                     # Off unless the lane files this group's twin itself -
                     # which is also the default the pipeline reads, so an
                     # untouched profile and a ticked-through one agree.
-                    on_by_default = desc in dg_twin_groups
+                    on_by_default = desc.split(" #")[0] in dg_twin_groups
                     skip_dg_choices[desc] = not st.checkbox(
                         labels.get(desc, desc),
                         value=not view.skip_dg_generation.get(desc, not on_by_default),
