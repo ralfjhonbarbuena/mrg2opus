@@ -108,18 +108,36 @@ def _normalize(value: Any) -> Any:
     return value
 
 
-def rates_row_key(row: dict[str, Any]) -> tuple:
+def _key_of(row: dict[str, Any], fields) -> tuple:
+    """A row's identity, read through _normalize.
+
+    Every key below goes through here, because a key built from raw cell
+    values splits rows that are the same filing. A reference workbook
+    writes a blank via-code as "" where we write nothing, and an unkeyed
+    "" != None turns every row on that sheet into one missing plus one
+    extra - 4,830 of each on CSE's 22-31 Aug filing, which reads as "the
+    tool generated a completely different sheet" rather than "these two
+    agree". The same normalization already covered field comparison; it
+    was only ever missing from the keys.
+    """
+    return tuple(_normalize(row.get(f)) for f in fields)
+
+
+_RATES_KEY_FIELDS = (
     # o_via_code disambiguates e.g. "Ganzhou via Shekou" vs "Ganzhou via
     # Yantian" - both resolve to the same origin_code (CNGAN) with
     # different routing and different rates, so it must be part of the key.
-    return (
-        row.get("origin_code"), row.get("destination_code"), row.get("cgo_type"), row.get("prefix"),
-        row.get("o_via_code"), row.get("d_via_code"),
-    )
+    "origin_code", "destination_code", "cgo_type", "prefix", "o_via_code", "d_via_code",
+)
+_ARBS_KEY_FIELDS = ("point", "over", "per")
+
+
+def rates_row_key(row: dict[str, Any]) -> tuple:
+    return _key_of(row, _RATES_KEY_FIELDS)
 
 
 def arbs_row_key(row: dict[str, Any]) -> tuple:
-    return (row.get("point"), row.get("over"), row.get("per"))
+    return _key_of(row, _ARBS_KEY_FIELDS)
 
 
 # --- The auditor's own row identity ------------------------------------------
@@ -160,7 +178,7 @@ AUDIT_CONCAT_FIELDS = (
 
 
 def audit_row_key(row: dict[str, Any]) -> tuple:
-    return tuple(row.get(f) for f in AUDIT_KEY_FIELDS)
+    return _key_of(row, AUDIT_KEY_FIELDS)
 
 
 def audit_concat(row: dict[str, Any], sep: str = "|") -> str:

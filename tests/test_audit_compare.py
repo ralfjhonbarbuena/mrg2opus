@@ -518,3 +518,20 @@ def test_disabling_skips_keeps_the_flags_that_add_rows():
     without = profile_without_row_skips(profile)
 
     assert without.skip_dg_generation == {"FAK (NOR)": False}
+
+
+def test_a_blank_via_code_matches_however_the_reference_spells_it():
+    """A reference workbook writes a blank via-code as "" where we write
+    nothing. Keys are built from those columns, so an unnormalized key
+    split every row on such a sheet into one missing plus one extra -
+    4,830 of each on CSE's 22-31 Aug filing, which reads as "the tool
+    generated a completely different sheet" rather than "these agree".
+    """
+    ours = _rates_dict(o_via_code=None, d_via_code=None)
+    theirs = _rates_dict(o_via_code="", d_via_code="  ")
+
+    assert rates_row_key(ours) == rates_row_key(theirs)
+    assert audit_row_key(ours) == audit_row_key(theirs)
+
+    result = diff_by_key([ours], [theirs], key_fn=audit_row_key, fields=cols.RATES_ROW_FIELDS)
+    assert not result.missing and not result.extra
