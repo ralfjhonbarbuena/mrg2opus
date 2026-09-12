@@ -2,12 +2,16 @@
 
 Convert goes raw MRG -> OPUS and Compare checks one against the other.
 Everything here takes a finished OPUS workbook in.
+
+The tool is chosen BEFORE a file is asked for, so each one can describe
+itself first and then ask for exactly what it needs - which is one file
+for three of them and two for the delta.
 """
 from __future__ import annotations
 
 import io
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import openpyxl
@@ -23,15 +27,15 @@ from mrg2opus.utilities.reshape import from_vertical, regroup_port_port, to_port
 from mrg2opus.utilities.summary import summarize
 from mrg2opus.utilities.workbook import LoadedFiling, load_filing
 
-TOOLS = [
-    "Reshape a filing",
-    "Check a filing",
-    "What's in this filing",
-    "What changed since last time",
-]
+TOOLS = {
+    "Reshape a filing": "Move the same rates between OPUS's three shapes.",
+    "Check a filing": "What to look at before you submit it.",
+    "What's in this filing": "Sheets, groups, ports and the validity window.",
+    "What changed since last time": "Two finished filings, side by side.",
+}
 
-# (label, which sheet it reads, which OpusRowSet field it writes, the
-# function between them). Each says plainly whether it is exact.
+# (which sheet it reads, which OpusRowSet field it writes, the function
+# between them, whether it is exact). Each says plainly which it is.
 CONVERSIONS = {
     "RATES → RATES PORT-PORT": ("rates", "rates_port_port", to_port_port, True),
     "RATES → VERTICAL RATES": ("rates", "vertical_rates", to_vertical, True),
@@ -42,8 +46,9 @@ CONVERSIONS = {
 
 @dataclass
 class UtilitiesState:
-    upload_key: str | None = None
-    filing: LoadedFiling | None = None
+    # Parsed filings by upload, so moving between tools doesn't re-read
+    # the same 7,400-row workbook.
+    cache: dict[str, LoadedFiling] = field(default_factory=dict)
 
 
 def _get_state() -> UtilitiesState:
@@ -62,24 +67,38 @@ def _open(uploaded) -> Workbook | None:
         return None
 
 
-def _load(uploaded, state: UtilitiesState) -> LoadedFiling | None:
-    key = f"{uploaded.name}:{uploaded.size}"
-    if state.upload_key != key:
+def _ask_for_filing(label: str, key: str) -> LoadedFiling | None:
+    """One uploader plus everything that has to be true before a tool can
+    work: the file opens, and it holds sheets we recognize."""
+    uploaded = st.file_uploader(label, type=["xlsx"], key=key)
+    if uploaded is None:
+        return None
+
+    state = _get_state()
+    cache_key = f"{uploaded.name}:{uploaded.size}"
+    if cache_key not in state.cache:
         wb = _open(uploaded)
         if wb is None:
             return None
-        state.filing, state.upload_key = load_filing(wb), key
-    return state.filing
+        state.cache[cache_key] = load_filing(wb)
+    filing = state.cache[cache_key]
 
+    if filing.is_empty:
+        st.error(
+            "No OPUS sheets recognized in that workbook. Sheets are matched by name - RATES, CMDT NOTE "
+            "or SRCHG, VERTICAL RATES, and so on."
+        )
+        st.caption(f"It holds: {', '.join(filing.unread)}.")
+        return None
 
-def _found_as_caption(filing: LoadedFiling) -> None:
     read = ", ".join(f"**{name}**" for name in filing.found_as.values())
-    st.caption(f"Read {len(filing.found_as)} sheet(s): {read}." if read else "No OPUS sheets recognized.")
+    st.caption(f"Read {len(filing.found_as)} sheet(s): {read}.")
     if filing.unread:
         st.caption(f"Left alone: {', '.join(filing.unread)}.")
+    return filing
 
 
-def _download(row_set: OpusRowSet, field: str, filename: str) -> None:
+def _download(row_set: OpusRowSet, field_name: str, filename: str) -> None:
     """Write one sheet as a real OPUS workbook - same headers, merges and
     column widths the converter's own export uses."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -88,19 +107,22 @@ def _download(row_set: OpusRowSet, field: str, filename: str) -> None:
         st.download_button(
             f"Download {filename}", data=path.read_bytes(), file_name=filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary", key=f"dl_{field}",
+            type="primary", key=f"dl_{field_name}",
         )
 
 
 # --- the tools ---------------------------------------------------------------
 
-def _reshape(filing: LoadedFiling) -> None:
-    st.markdown("#### Reshape a filing")
+def _reshape() -> None:
     st.caption(
         "OPUS takes the same rates in three shapes. **RATES** is one row per route with four rate "
         "columns across; **RATES PORT-PORT** is the same rows with every \";\"-joined port split out; "
         "**VERTICAL RATES** is one row per container size, with ports running downwards."
     )
+    filing = _ask_for_filing("The filing to reshape (.xlsx)", "utilities_reshape_upload")
+    if filing is None:
+        return
+
     available = [
         label for label, (source, _f, _fn, _exact) in CONVERSIONS.items() if filing.rows(source)
     ]
@@ -130,22 +152,23 @@ def _reshape(filing: LoadedFiling) -> None:
             st.warning("That sheet produced no rows. It may be empty, or shaped differently than expected.")
             return
         folded = len(rows) - len(out)
-        note = f" &mdash; {folded:,} folded into groups" if not exact and folded > 0 else ""
+        note = f" — {folded:,} folded into groups" if not exact and folded > 0 else ""
         st.success(f"{len(rows):,} rows in, {len(out):,} rows out{note}.")
-        st.dataframe(
-            [r.model_dump() for r in out[:200]], hide_index=True, width="stretch"
-        )
+        st.dataframe([r.model_dump() for r in out[:200]], hide_index=True, width="stretch")
         if len(out) > 200:
             st.caption(f"Showing the first 200 of {len(out):,}. The download has all of them.")
         _download(OpusRowSet(**{target: out}), target, f"{target}.xlsx")
 
 
-def _check(filing: LoadedFiling) -> None:
-    st.markdown("#### Check a filing")
+def _check() -> None:
     st.caption(
-        "What to look at before submitting. Each check reports its all-clear as loudly as its findings - "
-        "\"no duplicate filings\" is something to confirm, not just the absence of a warning."
+        "Each check reports its all-clear as loudly as its findings - \"no duplicate filings\" is "
+        "something to confirm before approving, not just the absence of a warning."
     )
+    filing = _ask_for_filing("The filing to check (.xlsx)", "utilities_check_upload")
+    if filing is None:
+        return
+
     with st.spinner("Checking..."):
         results = run_all(filing)
 
@@ -173,10 +196,13 @@ def _check(filing: LoadedFiling) -> None:
             )
 
 
-def _summary(filing: LoadedFiling) -> None:
-    st.markdown("#### What's in this filing")
-    s = summarize(filing)
+def _summary() -> None:
+    st.caption("The questions you ask of an unfamiliar workbook, in the order you ask them.")
+    filing = _ask_for_filing("The filing to read (.xlsx)", "utilities_summary_upload")
+    if filing is None:
+        return
 
+    s = summarize(filing)
     start, end = s.validity
     cols = st.columns(4)
     cols[0].metric("Rate rows", f"{s.rate_rows:,}")
@@ -200,25 +226,22 @@ def _summary(filing: LoadedFiling) -> None:
         st.caption(f"Sheets this tool doesn't read: {', '.join(s.unread_sheets)}.")
 
 
-def _delta(filing: LoadedFiling) -> None:
-    st.markdown("#### What changed since last time")
+def _delta() -> None:
     st.caption(
-        "Two finished filings of the same lane. Routes are matched on their locations, terms, transmodes "
-        "and vias, with the rates left out of the match - so a route whose rate moved reports as a change "
-        "rather than vanishing from one side and reappearing as new in the other."
+        "Routes are matched on their locations, terms, transmodes and vias, with the rates left out of "
+        "the match - so a route whose rate moved reports as a change rather than vanishing from one "
+        "side and reappearing as new in the other."
     )
-    earlier_file = st.file_uploader(
-        "The EARLIER filing (.xlsx)", type=["xlsx"], key="utilities_delta_earlier"
-    )
-    if earlier_file is None:
-        st.info("The file above is treated as the later one. Upload the earlier filing to compare against.")
+    col_before, col_after = st.columns(2)
+    with col_before:
+        earlier = _ask_for_filing("The EARLIER filing (.xlsx)", "utilities_delta_earlier")
+    with col_after:
+        later = _ask_for_filing("The LATER filing (.xlsx)", "utilities_delta_later")
+    if earlier is None or later is None:
+        st.info("Upload both filings to compare them.")
         return
 
-    wb = _open(earlier_file)
-    if wb is None:
-        return
-    earlier = load_filing(wb)
-    before, after = earlier.rows("rates"), filing.rows("rates")
+    before, after = earlier.rows("rates"), later.rows("rates")
     if not before or not after:
         st.warning("Both filings need a RATES sheet for this.")
         return
@@ -265,38 +288,21 @@ def _delta(filing: LoadedFiling) -> None:
                 )
 
 
+RENDERERS = {
+    "Reshape a filing": _reshape,
+    "Check a filing": _check,
+    "What's in this filing": _summary,
+    "What changed since last time": _delta,
+}
+
+
 def render() -> None:
-    state = _get_state()
     st.subheader("Utilities")
     st.caption(
         "Tools for a filing you already have. Convert builds one from a raw MRG; these reshape, check "
         "and read the finished workbook."
     )
 
-    uploaded = st.file_uploader("OPUS-format Excel file (.xlsx)", type=["xlsx"], key="utilities_upload")
-    if uploaded is None:
-        st.info("Upload an OPUS filing to begin.")
-        return
-
-    filing = _load(uploaded, state)
-    if filing is None:
-        return
-    if filing.is_empty:
-        st.error(
-            "No OPUS sheets recognized in that workbook. Sheets are matched by name - RATES, CMDT NOTE "
-            "or SRCHG, VERTICAL RATES, and so on."
-        )
-        st.caption(f"It holds: {', '.join(filing.unread)}.")
-        return
-    _found_as_caption(filing)
-
+    tool = st.radio("Tool", options=list(TOOLS), key="utilities_tool", captions=list(TOOLS.values()))
     st.divider()
-    tool = st.radio("Tool", options=TOOLS, horizontal=True, key="utilities_tool")
-    if tool == TOOLS[0]:
-        _reshape(filing)
-    elif tool == TOOLS[1]:
-        _check(filing)
-    elif tool == TOOLS[2]:
-        _summary(filing)
-    else:
-        _delta(filing)
+    RENDERERS[tool]()
