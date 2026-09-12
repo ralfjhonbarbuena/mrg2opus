@@ -156,3 +156,33 @@ def test_non_tad_sheet_name_collision_still_raises():
 
     with pytest.raises(DuplicateSheetError):
         merge_workbooks([wb1, wb2])
+
+
+def test_the_venezuela_supplement_merges_whichever_file_is_uploaded_first():
+    """The supplement's own "CSE" sheet is renamed when it collides with
+    the main file's. That only worked when the main file happened to be
+    seen first - upload them the other way round and the supplement
+    claimed the plain name, the main file collided, and the whole upload
+    was refused. Real: it is what stopped CSE TIER 1's two files being
+    uploaded together at all, since that folder's supplement sorts first.
+    """
+    def main():
+        wb = _wb_with_sheet("CSE", {(1, 1): "main"})
+        wb.create_sheet("NOR(PA)")
+        return wb
+
+    def supplement():
+        return _wb_with_sheet("CSE", {(1, 1): "venezuela"})
+
+    names = ["CSE Pricing Guideline Tier 1.xlsx",
+             "CSE Pricing Guideline Tier 1 for VELAG and VEPBL.xlsx"]
+
+    forward = merge_workbooks([main(), supplement()], names=names)
+    backward = merge_workbooks([supplement(), main()], names=list(reversed(names)))
+
+    assert sorted(forward.sheetnames) == sorted(backward.sheetnames)
+    assert "CSE VE" in forward.sheetnames and "CSE" in forward.sheetnames
+    assert forward["CSE"]["A1"].value == "main"
+    assert forward["CSE VE"]["A1"].value == "venezuela"
+    assert backward["CSE"]["A1"].value == "main"
+    assert backward["CSE VE"]["A1"].value == "venezuela"

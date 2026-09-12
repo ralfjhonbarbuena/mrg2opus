@@ -91,11 +91,22 @@ def merge_workbooks(workbooks: list[Workbook], names: list[str | None] | None = 
     if names is None:
         names = [None] * len(workbooks)
 
+    # The Venezuela supplement is renamed when it collides with the main
+    # file's own "CSE" sheet, which only works if the main file was seen
+    # first - upload them the other way round and the supplement claimed
+    # the plain name, then the main file collided and this raised. Sorting
+    # the supplements last makes the outcome the same either way.
+    #
+    # A stable partition, not a sort: TAD's multi-snapshot merge reads the
+    # earlier snapshot from whichever file came first, so every other
+    # file's position has to survive untouched.
+    ordered = sorted(zip(workbooks, names), key=lambda pair: _is_cse_venezuela_supplement(pair[1]))
+
     merged = openpyxl.Workbook()
     merged.remove(merged.active)
     seen: set[str] = set()
     tad_occurrence_count: dict[str, int] = {}
-    for wb, name in zip(workbooks, names):
+    for wb, name in ordered:
         is_venezuela_supplement = _is_cse_venezuela_supplement(name)
         for sheet_name in wb.sheetnames:
             target_name = sheet_name
