@@ -16,16 +16,18 @@ from decimal import Decimal
 import streamlit as st
 
 from mrg2opus.presets.models import MappingProfile, ScopeOverrides
-from mrg2opus.presets.store import list_presets, load_preset, save_preset
+from mrg2opus.presets.store import export_profile, import_profile, preset_filename
 
 # The scope picker's "not one scope, the shared settings" option.
 _ALL_SCOPES = "All scopes"
 
-# Where a just-loaded preset waits for the next run to pick it up. Named
-# without the "<prefix>_" shape on purpose: reset_filing_settings() wipes
-# every key with that prefix, and this one has to survive it - loading a
-# preset is exactly when the widgets need clearing.
+# Where a just-imported preset waits for the next run to pick it up, and
+# where a failed import leaves its reason. Both named without the
+# "<prefix>_" shape on purpose: reset_filing_settings() wipes every key
+# with that prefix, and these have to survive it - importing a preset is
+# exactly when the widgets need clearing.
 _PENDING_PRESET = "pending_preset_profile"
+_IMPORT_ERROR = "preset_import_error"
 
 _EDITOR_KEY_BASE = "commodity_overrides_editor"
 _EDITOR_NONCE = "commodity_overrides_editor_nonce"
@@ -70,8 +72,8 @@ def reset_filing_settings(prefix: str) -> None:
     _refresh_editor(prefix)
 
 
-def _load_preset_into(prefix: str, name: str) -> None:
-    """Stage a preset for the next run, and clear the widgets so it shows.
+def _import_preset(prefix: str, upload_key: str) -> None:
+    """Stage an uploaded preset for the next run, and clear the widgets.
 
     Both halves are needed. Replacing the profile alone changes nothing
     on screen: Streamlit renders a keyed widget from its stored value, not
@@ -79,40 +81,70 @@ def _load_preset_into(prefix: str, name: str) -> None:
     whatever was there while the returned profile said otherwise - the
     same way the Refresh button did nothing until it changed the grid's
     key rather than its contents.
+
+    Runs as a button's callback rather than on the upload itself, so
+    dropping a file never silently overwrites settings someone is partway
+    through entering.
     """
-    st.session_state[prefix + _PENDING_PRESET] = load_preset(name)
+    uploaded = st.session_state.get(upload_key)
+    if uploaded is None:
+        st.session_state[prefix + _IMPORT_ERROR] = "Choose a file first."
+        return
+    try:
+        profile = import_profile(uploaded.getvalue())
+    except Exception as exc:  # noqa: BLE001 - the reason is shown to the user
+        st.session_state[prefix + _IMPORT_ERROR] = (
+            f"{uploaded.name} isn't a settings file this can read. ({type(exc).__name__})"
+        )
+        return
+    st.session_state.pop(prefix + _IMPORT_ERROR, None)
+    st.session_state[prefix + _PENDING_PRESET] = profile
+    # Clears the uploader along with everything else, so the file doesn't
+    # sit there afterwards looking like it still needs importing.
     reset_filing_settings(prefix)
 
 
 def _render_presets(profile: MappingProfile, key_prefix: str) -> None:
-    """Save or load the whole settings sheet under a name.
+    """Export the whole settings sheet as a file, or import one back.
+
+    A file rather than a named folder entry, so the settings travel with
+    the person who made them - onto another machine, to the auditor, into
+    the repo - instead of living beside whichever copy of the app wrote
+    them. The format is unchanged, so anything already in data/presets
+    imports here as-is.
 
     Takes the profile the settings CURRENTLY describe, not the one last
     applied - which is why the caller renders this into a container held
-    open from the top of the page and filled at the bottom. Saving what
+    open from the top of the page and filled at the bottom. Exporting what
     was applied rather than what is on screen would quietly write a
     different sheet than the one being looked at.
     """
-    with st.expander("Load / save a named preset"):
-        existing = list_presets()
-        col_load, col_save = st.columns(2)
-        with col_load:
-            if existing:
-                pick = st.selectbox("Existing presets", options=existing, key=f"{key_prefix}_preset_pick")
-                st.button(
-                    "Load preset", key=f"{key_prefix}_preset_load",
-                    on_click=_load_preset_into, args=(key_prefix, pick),
-                    help="Replaces every setting below with the preset's own.",
-                )
-            else:
-                st.caption("No saved presets yet.")
-        with col_save:
+    with st.expander("Export / import these settings"):
+        col_export, col_import = st.columns(2)
+        with col_export:
+            st.markdown("**Export**")
             name = st.text_input(
-                "Save current settings as", value=profile.name, key=f"{key_prefix}_preset_name"
+                "Name this settings file", value=profile.name, key=f"{key_prefix}_preset_name"
             )
-            if st.button("Save preset", key=f"{key_prefix}_preset_save"):
-                path = save_preset(profile.model_copy(update={"name": name}))
-                st.success(f"Saved to {path.name}.")
+            st.download_button(
+                "Export settings",
+                data=export_profile(profile.model_copy(update={"name": name})),
+                file_name=preset_filename(name),
+                mime="application/json",
+                key=f"{key_prefix}_preset_export",
+                help="Everything on this page, as one file you can keep, send on, or import later.",
+            )
+        with col_import:
+            st.markdown("**Import**")
+            upload_key = f"{key_prefix}_preset_import"
+            st.file_uploader("A settings file (.json)", type=["json"], key=upload_key)
+            st.button(
+                "Import settings", key=f"{key_prefix}_preset_import_go",
+                on_click=_import_preset, args=(key_prefix, upload_key),
+                help="Replaces every setting below with the file's own.",
+            )
+            if (problem := st.session_state.get(key_prefix + _IMPORT_ERROR)):
+                st.error(problem)
 
 
 def _with_scope_overrides(
@@ -167,7 +199,7 @@ def render_filing_settings(
     effect: Convert holds it until "Apply & Continue", Compare adopts it
     straight away and re-checks on "Run Comparison".
     """
-    # A preset loaded on the previous run replaces the caller's profile
+    # A preset imported on the previous run replaces the caller's profile
     # for this one, and is handed back so the caller adopts it too.
     pending = st.session_state.pop(key_prefix + _PENDING_PRESET, None)
     if pending is not None:
