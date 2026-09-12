@@ -2,10 +2,12 @@
 
     ./.venv/Scripts/python.exe -m streamlit run streamlit_app.py
 
-Two modes, selected at the top: "Convert" (the 4-step wizard:
-upload+classify -> preview -> customize -> export) and "Compare"
-(standalone: upload an MRG plus a reference OPUS file, see where they
-diverge - see docs/superpowers/specs/2026-08-23-mrg-opus-comparison-design.md).
+Three modes, selected at the top. "Convert" (the 4-step wizard:
+upload+classify -> preview -> customize -> export), "Compare" (upload an
+MRG plus a reference OPUS file, see where they diverge - see
+docs/superpowers/specs/2026-08-23-mrg-opus-comparison-design.md), and
+"Utilities" (tools that start from a finished OPUS filing rather than a
+raw MRG: reshape it, check it, read it, diff two of them).
 
 streamlit_app.py at the repo root is the canonical entry point, but this
 module is ALSO runnable directly (`streamlit run mrg2opus/ui/app.py`) -
@@ -36,7 +38,7 @@ import streamlit as st  # noqa: E402  (must follow the sys.path guard)
 from mrg2opus.parsers import (  # noqa: F401
     aubp, auec, auwc, cse, eaf, laec, lawc, nz1_sea, nzj, saf, tad_aew_amw, tad_oew_omw, tad_wmw_wew, waf, west_asia_multi, west_asia_waf,
 )
-from mrg2opus.ui import compare_page
+from mrg2opus.ui import compare_page, utilities_page
 from mrg2opus.ui.state import get_state
 from mrg2opus.ui.steps import step1_upload, step2_preview, step3_customize, step4_export
 from mrg2opus.ui.theme import apply_theme
@@ -61,14 +63,17 @@ def main() -> None:
     apply_theme()  # must follow set_page_config; see ui/theme.py
     st.title("MRG → OPUS Converter")
 
-    # The two options name themselves, so the "Mode" label is noise.
+    # The options name themselves, so the "Mode" label is noise.
     mode = st.radio(
-        "Mode", options=["Convert", "Compare"], horizontal=True, label_visibility="collapsed"
+        "Mode", options=["Convert", "Compare", "Utilities"], horizontal=True, label_visibility="collapsed"
     )
     st.divider()
 
     if mode == "Compare":
         compare_page.render()
+        return
+    if mode == "Utilities":
+        utilities_page.render()
         return
 
     state = get_state()
